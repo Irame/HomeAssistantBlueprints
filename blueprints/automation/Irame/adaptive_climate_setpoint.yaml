@@ -228,9 +228,9 @@ action:
 
       outdoor_override_off: >
         {% if day_type == 'cool' %}
-          {{ current_outdoor_temp <= target_temp }}
+          {{ current_outdoor_temp <= cool_setpoint_baseline }}
         {% elif day_type == 'heat' %}
-          {{ current_outdoor_temp >= target_temp }}
+          {{ current_outdoor_temp >= heat_setpoint_baseline }}
         {% else %}
           false
         {% endif %}
