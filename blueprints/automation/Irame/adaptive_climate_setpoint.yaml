@@ -201,8 +201,15 @@ action:
 
       - conditions: "{{ trigger.id == 'refresh' }}"
         sequence:
+          - action: weather.get_forecasts
+            target:
+              entity_id: !input weather_entity
+            data:
+              type: daily
+            response_variable: forecast_result
           - variables:
               forecast_high_helper_id: !input forecast_high_helper
+              weather_entity_id: !input weather_entity
               price_sensor_id: !input price_sensor
               outdoor_sensor_id: !input outdoor_sensor
 
@@ -215,6 +222,7 @@ action:
               price_weight: !input price_weight
 
               max_temp_today: "{{ states(forecast_high_helper_id) | float }}"
+              max_temp_today_from_now: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
               current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
 
               current_price: "{{ states(price_sensor_id) | float(0) }}"
@@ -232,9 +240,9 @@ action:
 
               raw_severity: >
                 {% if day_type == 'cool' %}
-                  {{ ((max_temp_today - cool_setpoint_baseline) / (outdoor_hot_ref - cool_setpoint_baseline)) }}
+                  {{ ((max_temp_today_from_now - cool_setpoint_baseline) / (outdoor_hot_ref - cool_setpoint_baseline)) }}
                 {% elif day_type == 'heat' %}
-                  {{ ((heat_setpoint_baseline - max_temp_today) / (heat_setpoint_baseline - outdoor_cold_ref)) }}
+                  {{ ((heat_setpoint_baseline - max_temp_today_from_now) / (heat_setpoint_baseline - outdoor_cold_ref)) }}
                 {% else %}
                   0
                 {% endif %}
