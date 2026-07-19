@@ -226,15 +226,6 @@ action:
           {{ now_t >= night_start_t or now_t < night_end_t }}
         {% endif %}
 
-      standby_off: >
-        {% if day_type == 'cool' %}
-          {{ target_temp >= cool_setpoint_baseline }}
-        {% elif day_type == 'heat' %}
-          {{ target_temp <= heat_setpoint_baseline }}
-        {% else %}
-          true
-        {% endif %}
-
       outdoor_override_off: >
         {% if day_type == 'cool' %}
           {{ current_outdoor_temp <= target_temp }}
@@ -244,7 +235,7 @@ action:
           false
         {% endif %}
 
-      should_be_off: "{{ is_night or day_type == 'off' or standby_off or outdoor_override_off }}"
+      should_be_off: "{{ is_night or day_type == 'off' or outdoor_override_off }}"
 
   - choose:
       - conditions: "{{ should_be_off }}"
