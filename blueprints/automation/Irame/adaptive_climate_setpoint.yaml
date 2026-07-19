@@ -136,138 +136,181 @@ blueprint:
       selector:
         time: {}
 
+    forecast_high_helper:
+      name: Forecast High Storage Helper
+      description: >
+        An input_number helper used to store today's forecasted high once
+        per day, so later-day logic isn't affected by forecasts drifting
+        downward as the day progresses. Create one input_number helper and
+        select it here.
+      selector:
+        entity:
+          domain: input_number
+
+    forecast_capture_time:
+      name: Forecast Capture Time
+      description: >
+        Time of day to read and freeze the forecasted high. Pick an early
+        time, before today's peak temperature typically occurs.
+      default: "05:00:00"
+      selector:
+        time: {}
+
 trigger:
-  - platform: time_pattern
+  - id: refresh
+    platform: time_pattern
     minutes: "/15"
-  - platform: state
+  - id: refresh
+    platform: state
     entity_id: !input price_sensor
-  - platform: state
+  - id: refresh
+    platform: state
     entity_id: !input outdoor_sensor
-  - platform: time
+  - id: refresh
+    platform: time
     at: !input night_start
-  - platform: time
+  - id: refresh
+    platform: time
     at: !input night_end
+  - id: capture_forecast
+    platform: time
+    at: !input forecast_capture_time
+  - id: capture_forecast
+    platform: homeassistant
+    event: start
 
 condition: []
 
 action:
-  - action: weather.get_forecasts
-    target:
-      entity_id: !input weather_entity
-    data:
-      type: daily
-    response_variable: forecast_result
-
-  - variables:
-      weather_entity_id: !input weather_entity
-      price_sensor_id: !input price_sensor
-      outdoor_sensor_id: !input outdoor_sensor
-
-      cool_setpoint_min: !input cool_setpoint_min
-      cool_setpoint_baseline: !input cool_setpoint_baseline
-      heat_setpoint_baseline: !input heat_setpoint_baseline
-      heat_setpoint_max: !input heat_setpoint_max
-      outdoor_hot_ref: !input outdoor_hot_ref
-      outdoor_cold_ref: !input outdoor_cold_ref
-      price_weight: !input price_weight
-
-      max_temp_today: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
-      current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
-
-      current_price: "{{ states(price_sensor_id) | float(0) }}"
-      min_price: "{{ state_attr(price_sensor_id, 'min_price') | float(0) }}"
-      max_price: "{{ state_attr(price_sensor_id, 'max_price') | float(1) }}"
-
-      day_type: >
-        {% if max_temp_today > cool_setpoint_baseline %}
-          cool
-        {% elif max_temp_today < heat_setpoint_baseline %}
-          heat
-        {% else %}
-          off
-        {% endif %}
-
-      raw_severity: >
-        {% if day_type == 'cool' %}
-          {{ ((max_temp_today - cool_setpoint_baseline) / (outdoor_hot_ref - cool_setpoint_baseline)) }}
-        {% elif day_type == 'heat' %}
-          {{ ((heat_setpoint_baseline - max_temp_today) / (heat_setpoint_baseline - outdoor_cold_ref)) }}
-        {% else %}
-          0
-        {% endif %}
-      severity: "{{ [[raw_severity | float, 0] | max, 1] | min }}"
-
-      price_factor: >
-        {{ ((current_price - min_price) / ((max_price - min_price) if max_price != min_price else 1)) }}
-      price_factor_clamped: "{{ [[price_factor | float, 0] | max, 1] | min }}"
-
-      dampening: "{{ 1 - (price_weight * price_factor_clamped) }}"
-      effective_severity: "{{ [[(severity * dampening) | float, 0] | max, 1] | min }}"
-
-      target_temp_raw: >
-        {% if day_type == 'cool' %}
-          {{ cool_setpoint_baseline - effective_severity * (cool_setpoint_baseline - cool_setpoint_min) }}
-        {% elif day_type == 'heat' %}
-          {{ heat_setpoint_baseline + effective_severity * (heat_setpoint_max - heat_setpoint_baseline) }}
-        {% else %}
-          {{ cool_setpoint_baseline }}
-        {% endif %}
-      target_temp: "{{ ((target_temp_raw | float * 2) | round(0) / 2) }}"
-
-      night_start_str: !input night_start
-      night_end_str: !input night_end
-      night_start_t: "{{ strptime(night_start_str, '%H:%M:%S').time() }}"
-      night_end_t: "{{ strptime(night_end_str, '%H:%M:%S').time() }}"
-      now_t: "{{ now().time() }}"
-      is_night: >
-        {% if night_start_t <= night_end_t %}
-          {{ night_start_t <= now_t < night_end_t }}
-        {% else %}
-          {{ now_t >= night_start_t or now_t < night_end_t }}
-        {% endif %}
-
-      outdoor_override_off: >
-        {% if day_type == 'cool' %}
-          {{ current_outdoor_temp <= cool_setpoint_baseline }}
-        {% elif day_type == 'heat' %}
-          {{ current_outdoor_temp >= heat_setpoint_baseline }}
-        {% else %}
-          false
-        {% endif %}
-
-      should_be_off: "{{ is_night or day_type == 'off' or outdoor_override_off }}"
-
   - choose:
-      - conditions: "{{ should_be_off }}"
+      - conditions: "{{ trigger.id == 'capture_forecast' }}"
         sequence:
-          - action: climate.set_hvac_mode
+          - action: weather.get_forecasts
             target:
-              entity_id: !input climate_entities
+              entity_id: !input weather_entity
             data:
-              hvac_mode: "off"
-      - conditions: "{{ not should_be_off and day_type == 'cool' }}"
+              type: daily
+            response_variable: forecast_result
+          - variables:
+              weather_entity_id: !input weather_entity
+          - action: input_number.set_value
+            target:
+              entity_id: !input forecast_high_helper
+            data:
+              value: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
+
+      - conditions: "{{ trigger.id == 'refresh' }}"
         sequence:
-          - action: climate.set_hvac_mode
-            target:
-              entity_id: !input climate_entities
-            data:
-              hvac_mode: cool
-          - action: climate.set_temperature
-            target:
-              entity_id: !input climate_entities
-            data:
-              temperature: "{{ target_temp }}"
-      - conditions: "{{ not should_be_off and day_type == 'heat' }}"
-        sequence:
-          - action: climate.set_hvac_mode
-            target:
-              entity_id: !input climate_entities
-            data:
-              hvac_mode: heat
-          - action: climate.set_temperature
-            target:
-              entity_id: !input climate_entities
-            data:
-              temperature: "{{ target_temp }}"
+          - variables:
+              forecast_high_helper_id: !input forecast_high_helper
+              price_sensor_id: !input price_sensor
+              outdoor_sensor_id: !input outdoor_sensor
+
+              cool_setpoint_min: !input cool_setpoint_min
+              cool_setpoint_baseline: !input cool_setpoint_baseline
+              heat_setpoint_baseline: !input heat_setpoint_baseline
+              heat_setpoint_max: !input heat_setpoint_max
+              outdoor_hot_ref: !input outdoor_hot_ref
+              outdoor_cold_ref: !input outdoor_cold_ref
+              price_weight: !input price_weight
+
+              max_temp_today: "{{ states(forecast_high_helper_id) | float }}"
+              current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
+
+              current_price: "{{ states(price_sensor_id) | float(0) }}"
+              min_price: "{{ state_attr(price_sensor_id, 'min_price') | float(0) }}"
+              max_price: "{{ state_attr(price_sensor_id, 'max_price') | float(1) }}"
+
+              day_type: >
+                {% if max_temp_today > cool_setpoint_baseline %}
+                  cool
+                {% elif max_temp_today < heat_setpoint_baseline %}
+                  heat
+                {% else %}
+                  off
+                {% endif %}
+
+              raw_severity: >
+                {% if day_type == 'cool' %}
+                  {{ ((max_temp_today - cool_setpoint_baseline) / (outdoor_hot_ref - cool_setpoint_baseline)) }}
+                {% elif day_type == 'heat' %}
+                  {{ ((heat_setpoint_baseline - max_temp_today) / (heat_setpoint_baseline - outdoor_cold_ref)) }}
+                {% else %}
+                  0
+                {% endif %}
+              severity: "{{ [[raw_severity | float, 0] | max, 1] | min }}"
+
+              price_factor: >
+                {{ ((current_price - min_price) / ((max_price - min_price) if max_price != min_price else 1)) }}
+              price_factor_clamped: "{{ [[price_factor | float, 0] | max, 1] | min }}"
+
+              dampening: "{{ 1 - (price_weight * price_factor_clamped) }}"
+              effective_severity: "{{ [[(severity * dampening) | float, 0] | max, 1] | min }}"
+
+              target_temp_raw: >
+                {% if day_type == 'cool' %}
+                  {{ cool_setpoint_baseline - effective_severity * (cool_setpoint_baseline - cool_setpoint_min) }}
+                {% elif day_type == 'heat' %}
+                  {{ heat_setpoint_baseline + effective_severity * (heat_setpoint_max - heat_setpoint_baseline) }}
+                {% else %}
+                  {{ cool_setpoint_baseline }}
+                {% endif %}
+              target_temp: "{{ ((target_temp_raw | float * 2) | round(0) / 2) }}"
+
+              night_start_str: !input night_start
+              night_end_str: !input night_end
+              night_start_t: "{{ strptime(night_start_str, '%H:%M:%S').time() }}"
+              night_end_t: "{{ strptime(night_end_str, '%H:%M:%S').time() }}"
+              now_t: "{{ now().time() }}"
+              is_night: >
+                {% if night_start_t <= night_end_t %}
+                  {{ night_start_t <= now_t < night_end_t }}
+                {% else %}
+                  {{ now_t >= night_start_t or now_t < night_end_t }}
+                {% endif %}
+
+              outdoor_override_off: >
+                {% if day_type == 'cool' %}
+                  {{ current_outdoor_temp <= cool_setpoint_baseline }}
+                {% elif day_type == 'heat' %}
+                  {{ current_outdoor_temp >= heat_setpoint_baseline }}
+                {% else %}
+                  false
+                {% endif %}
+
+              should_be_off: "{{ is_night or day_type == 'off' or outdoor_override_off }}"
+
+          - choose:
+              - conditions: "{{ should_be_off }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input climate_entities
+                    data:
+                      hvac_mode: "off"
+              - conditions: "{{ not should_be_off and day_type == 'cool' }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input climate_entities
+                    data:
+                      hvac_mode: cool
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: !input climate_entities
+                    data:
+                      temperature: "{{ target_temp }}"
+              - conditions: "{{ not should_be_off and day_type == 'heat' }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input climate_entities
+                    data:
+                      hvac_mode: heat
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: !input climate_entities
+                    data:
+                      temperature: "{{ target_temp }}"
 
 mode: single
