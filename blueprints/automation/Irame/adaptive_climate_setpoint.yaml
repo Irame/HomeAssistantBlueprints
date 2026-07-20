@@ -220,6 +220,9 @@ trigger:
     platform: state
     entity_id: !input climate_entities
 
+trace:
+  stored_traces: 20
+
 condition: []
 
 action:
