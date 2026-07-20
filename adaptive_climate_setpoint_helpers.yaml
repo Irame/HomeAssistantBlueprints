@@ -1,0 +1,19 @@
+input_text:
+  climate_manual_override_context:
+    name: Climate Manual Override — Last Automation Context
+    max: 255
+
+input_datetime:
+  climate_manual_override_timestamp:
+    name: Climate Manual Override — Last Detected Manual Change
+    has_date: true
+    has_time: true
+
+input_number:
+  climate_forecast_high_today:
+    name: Captured Forecast High (Today)
+    min: -30
+    max: 50
+    step: 0.1
+    initial: 20
+    unit_of_measurement: "°C"

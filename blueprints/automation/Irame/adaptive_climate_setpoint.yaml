@@ -3,9 +3,9 @@ blueprint:
   description: >
     Chooses heating, cooling, or off based on today's forecasted high relative
     to separate cooling/heating baselines, scales the target temperature by
-    severity and electricity price, and shuts off at night, during the dead
-    band, when price dampens severity back to baseline, or when the live
-    outdoor temperature makes running pointless.
+    severity and electricity price, shuts off at night, during the dead band,
+    or when the live outdoor temperature makes running pointless, and pauses
+    itself for a configurable cooldown after any manual change at the device.
   domain: automation
   source_url: https://github.com/Irame/HomeAssistantBlueprints/blob/master/blueprints/automation/Irame/adaptive_climate_setpoint.yaml
   input:
@@ -156,6 +156,44 @@ blueprint:
       selector:
         time: {}
 
+    manual_override_context_helper:
+      name: Manual Override — Context Tracking Helper
+      description: >
+        An input_text helper (max length 255) used internally to remember
+        this automation's own last context ID, so it can tell its own
+        temperature/mode changes apart from a manual change at the device.
+        Create one input_text helper and select it here. Do not share this
+        helper between multiple instances of this blueprint.
+      selector:
+        entity:
+          domain: input_text
+
+    manual_override_timestamp_helper:
+      name: Manual Override — Last Manual Change Helper
+      description: >
+        An input_datetime helper (date + time) used to store when a manual
+        change was last detected. Create one input_datetime helper and
+        select it here. Do not share this helper between multiple instances
+        of this blueprint.
+      selector:
+        entity:
+          domain: input_datetime
+
+    manual_override_duration_minutes:
+      name: Manual Override Cooldown (minutes)
+      description: >
+        How long the automation pauses itself after detecting a manual
+        change to hvac_mode or target temperature at the device. Set to 0
+        to disable this guard entirely.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 720
+          step: 5
+          unit_of_measurement: minutes
+          mode: box
+
 trigger:
   - id: refresh
     platform: time_pattern
@@ -178,6 +216,9 @@ trigger:
   - id: capture_forecast
     platform: homeassistant
     event: start
+  - id: climate_changed
+    platform: state
+    entity_id: !input climate_entities
 
 condition: []
 
@@ -199,6 +240,29 @@ action:
             data:
               value: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
 
+      - conditions: "{{ trigger.id == 'climate_changed' }}"
+        sequence:
+          - variables:
+              context_helper_id: !input manual_override_context_helper
+              timestamp_helper_id: !input manual_override_timestamp_helper
+              relevant_change: >
+                {{ trigger.from_state is not none and (
+                     trigger.to_state.state != trigger.from_state.state
+                     or trigger.to_state.attributes.get('temperature')
+                        != trigger.from_state.attributes.get('temperature')
+                   ) }}
+              is_self_caused: >
+                {{ trigger.to_state.context.parent_id is not none
+                   and trigger.to_state.context.parent_id == states(context_helper_id) }}
+          - choose:
+              - conditions: "{{ relevant_change and not is_self_caused }}"
+                sequence:
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: !input manual_override_timestamp_helper
+                    data:
+                      timestamp: "{{ now().timestamp() }}"
+
       - conditions: "{{ trigger.id == 'refresh' }}"
         sequence:
           - action: weather.get_forecasts
@@ -212,6 +276,9 @@ action:
               weather_entity_id: !input weather_entity
               price_sensor_id: !input price_sensor
               outdoor_sensor_id: !input outdoor_sensor
+              context_helper_id: !input manual_override_context_helper
+              timestamp_helper_id: !input manual_override_timestamp_helper
+              override_duration_minutes: !input manual_override_duration_minutes
 
               cool_setpoint_min: !input cool_setpoint_min
               cool_setpoint_baseline: !input cool_setpoint_baseline
@@ -220,6 +287,10 @@ action:
               outdoor_hot_ref: !input outdoor_hot_ref
               outdoor_cold_ref: !input outdoor_cold_ref
               price_weight: !input price_weight
+
+              manual_override_active: >
+                {{ (as_timestamp(now()) - as_timestamp(states(timestamp_helper_id), 0))
+                   < (override_duration_minutes * 60) }}
 
               max_temp_today: "{{ states(forecast_high_helper_id) | float }}"
               max_temp_today_from_now: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
@@ -289,36 +360,44 @@ action:
               should_be_off: "{{ is_night or day_type == 'off' or outdoor_override_off }}"
 
           - choose:
-              - conditions: "{{ should_be_off }}"
+              - conditions: "{{ not manual_override_active }}"
                 sequence:
-                  - action: climate.set_hvac_mode
+                  - action: input_text.set_value
                     target:
-                      entity_id: !input climate_entities
+                      entity_id: !input manual_override_context_helper
                     data:
-                      hvac_mode: "off"
-              - conditions: "{{ not should_be_off and day_type == 'cool' }}"
-                sequence:
-                  - action: climate.set_hvac_mode
-                    target:
-                      entity_id: !input climate_entities
-                    data:
-                      hvac_mode: cool
-                  - action: climate.set_temperature
-                    target:
-                      entity_id: !input climate_entities
-                    data:
-                      temperature: "{{ target_temp }}"
-              - conditions: "{{ not should_be_off and day_type == 'heat' }}"
-                sequence:
-                  - action: climate.set_hvac_mode
-                    target:
-                      entity_id: !input climate_entities
-                    data:
-                      hvac_mode: heat
-                  - action: climate.set_temperature
-                    target:
-                      entity_id: !input climate_entities
-                    data:
-                      temperature: "{{ target_temp }}"
+                      value: "{{ this.context.id }}"
+                  - choose:
+                      - conditions: "{{ should_be_off }}"
+                        sequence:
+                          - action: climate.set_hvac_mode
+                            target:
+                              entity_id: !input climate_entities
+                            data:
+                              hvac_mode: "off"
+                      - conditions: "{{ not should_be_off and day_type == 'cool' }}"
+                        sequence:
+                          - action: climate.set_hvac_mode
+                            target:
+                              entity_id: !input climate_entities
+                            data:
+                              hvac_mode: cool
+                          - action: climate.set_temperature
+                            target:
+                              entity_id: !input climate_entities
+                            data:
+                              temperature: "{{ target_temp }}"
+                      - conditions: "{{ not should_be_off and day_type == 'heat' }}"
+                        sequence:
+                          - action: climate.set_hvac_mode
+                            target:
+                              entity_id: !input climate_entities
+                            data:
+                              hvac_mode: heat
+                          - action: climate.set_temperature
+                            target:
+                              entity_id: !input climate_entities
+                            data:
+                              temperature: "{{ target_temp }}"
 
 mode: single
