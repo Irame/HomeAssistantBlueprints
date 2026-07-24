@@ -194,6 +194,18 @@ blueprint:
           unit_of_measurement: minutes
           mode: box
 
+    door_window_sensors:
+      name: Door/Window Sensors
+      description: >
+        Optional. If any of these is open, the climate device is forced off
+        immediately — bypassing the manual override cooldown. Select binary_sensor entities (device
+        class door or window). Leave empty if you don't have any.
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
 trigger:
   - id: refresh
     platform: time_pattern
@@ -204,6 +216,9 @@ trigger:
   - id: refresh
     platform: state
     entity_id: !input outdoor_sensor
+  - id: refresh
+    platform: state
+    entity_id: !input door_window_sensors
   - id: refresh
     platform: time
     at: !input night_start
@@ -282,6 +297,7 @@ action:
               context_helper_id: !input manual_override_context_helper
               timestamp_helper_id: !input manual_override_timestamp_helper
               override_duration_minutes: !input manual_override_duration_minutes
+              door_window_entities: !input door_window_sensors
 
               cool_setpoint_min: !input cool_setpoint_min
               cool_setpoint_baseline: !input cool_setpoint_baseline
@@ -360,7 +376,11 @@ action:
                   false
                 {% endif %}
 
-              should_be_off: "{{ is_night or day_type == 'off' or outdoor_override_off }}"
+              window_open: >
+                {{ door_window_entities | length > 0
+                   and (expand(door_window_entities) | selectattr('state', 'eq', 'on') | list | count) > 0 }}
+
+              should_be_off: "{{ window_open or is_night or day_type == 'off' or outdoor_override_off }}"
 
           - choose:
               - conditions: "{{ not manual_override_active }}"
