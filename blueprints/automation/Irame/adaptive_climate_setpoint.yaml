@@ -432,6 +432,15 @@ action:
               execute_now: "{{ (window_open or not manual_override_active) and timing_guard_ok }}"
 
           - choose:
+              - conditions: "{{ window_open }}"
+                sequence:
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: !input manual_override_timestamp_helper
+                    data:
+                      timestamp: "{{ 0 }}"
+
+          - choose:
               - conditions: "{{ execute_now }}"
                 sequence:
                   - action: input_text.set_value
