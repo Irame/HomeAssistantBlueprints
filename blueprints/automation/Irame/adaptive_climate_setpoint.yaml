@@ -206,6 +206,34 @@ blueprint:
           domain: binary_sensor
           multiple: true
 
+    min_running_minutes:
+      name: Minimum Running Time (minutes)
+      description: >
+        Once switched to heat or cool, won't switch back to off for at
+        least this long. Set to 0 to disable.
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 30
+          step: 1
+          unit_of_measurement: minutes
+          mode: box
+
+    min_idle_minutes:
+      name: Minimum Idle Time (minutes)
+      description: >
+        Once switched off, won't switch back to heat or cool for at least
+        this long. Set to 0 to disable.
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 30
+          step: 1
+          unit_of_measurement: minutes
+          mode: box
+
 trigger:
   - id: refresh
     platform: time_pattern
@@ -297,7 +325,10 @@ action:
               context_helper_id: !input manual_override_context_helper
               timestamp_helper_id: !input manual_override_timestamp_helper
               override_duration_minutes: !input manual_override_duration_minutes
+              climate_entities_list: !input climate_entities
               door_window_entities: !input door_window_sensors
+              min_running_minutes: !input min_running_minutes
+              min_idle_minutes: !input min_idle_minutes
 
               cool_setpoint_min: !input cool_setpoint_min
               cool_setpoint_baseline: !input cool_setpoint_baseline
@@ -382,8 +413,26 @@ action:
 
               should_be_off: "{{ window_open or is_night or day_type == 'off' or outdoor_override_off }}"
 
+              first_climate_entity: "{{ climate_entities_list[0] }}"
+              current_mode: "{{ states(first_climate_entity) }}"
+              is_currently_off: "{{ current_mode == 'off' }}"
+              seconds_in_current_state: >
+                {{ (as_timestamp(now()) - as_timestamp(states[first_climate_entity].last_changed)) }}
+
+              min_run_elapsed: "{{ seconds_in_current_state >= (min_running_minutes | float * 60) }}"
+              min_idle_elapsed: "{{ seconds_in_current_state >= (min_idle_minutes | float * 60) }}"
+
+              timing_guard_ok: >
+                {% if should_be_off %}
+                  {{ is_currently_off or min_run_elapsed }}
+                {% else %}
+                  {{ (not is_currently_off) or min_idle_elapsed }}
+                {% endif %}
+
+              execute_now: "{{ not manual_override_active and timing_guard_ok }}"
+
           - choose:
-              - conditions: "{{ not manual_override_active }}"
+              - conditions: "{{ execute_now }}"
                 sequence:
                   - action: input_text.set_value
                     target:
