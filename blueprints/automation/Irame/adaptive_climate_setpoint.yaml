@@ -438,7 +438,7 @@ action:
                     target:
                       entity_id: !input manual_override_timestamp_helper
                     data:
-                      timestamp: "{{ 0 }}"
+                      timestamp: 0
 
           - choose:
               - conditions: "{{ execute_now }}"
