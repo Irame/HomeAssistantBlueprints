@@ -429,7 +429,7 @@ action:
                   {{ (not is_currently_off) or min_idle_elapsed }}
                 {% endif %}
 
-              execute_now: "{{ not manual_override_active and timing_guard_ok }}"
+              execute_now: "{{ (window_open or not manual_override_active) and timing_guard_ok }}"
 
           - choose:
               - conditions: "{{ execute_now }}"
