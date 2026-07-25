@@ -239,22 +239,10 @@ max: 10
 trigger:
   - id: refresh
     platform: time_pattern
-    minutes: "/15"
-  - id: refresh
-    platform: state
-    entity_id: !input price_sensor
-  - id: refresh
-    platform: state
-    entity_id: !input outdoor_sensor
+    minutes: "/1"
   - id: refresh
     platform: state
     entity_id: !input door_window_sensors
-  - id: refresh
-    platform: time
-    at: !input night_start
-  - id: refresh
-    platform: time
-    at: !input night_end
   - id: capture_forecast
     platform: time
     at: !input forecast_capture_time
