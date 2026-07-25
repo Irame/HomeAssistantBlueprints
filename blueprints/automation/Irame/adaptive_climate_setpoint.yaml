@@ -234,6 +234,8 @@ blueprint:
           unit_of_measurement: minutes
           mode: box
 
+mode: queued
+max: 10
 trigger:
   - id: refresh
     platform: time_pattern
@@ -480,5 +482,3 @@ action:
                               entity_id: !input climate_entities
                             data:
                               temperature: "{{ target_temp }}"
-
-mode: single
