@@ -329,19 +329,14 @@ trigger:
   - id: refresh
     platform: state
     entity_id: !input presence_entities
+    to: null # ignore attribute changes
   - id: capture_forecast
     platform: time
     at: !input forecast_capture_time
   - id: climate_changed
     platform: state
     entity_id: !input climate_entities
-    to:
-      - "off"
-      - cool
-      - heat
-      - fan_only
-      - dry
-      - auto
+    to: null # ignore attribute changes
   - id: climate_changed
     platform: state
     entity_id: !input climate_entities
