@@ -245,12 +245,20 @@ trigger:
   - id: capture_forecast
     platform: time
     at: !input forecast_capture_time
-  - id: capture_forecast
-    platform: homeassistant
-    event: start
   - id: climate_changed
     platform: state
     entity_id: !input climate_entities
+    to:
+      - "off"
+      - cool
+      - heat
+      - fan_only
+      - dry
+      - auto
+  - id: climate_changed
+    platform: state
+    entity_id: !input climate_entities
+    attribute: temperature
 
 trace:
   stored_traces: 20
@@ -279,17 +287,10 @@ action:
         sequence:
           - variables:
               self_call_lockout_helper_id: !input self_call_lockout_helper
-              timestamp_helper_id: !input manual_override_timestamp_helper
-              relevant_change: >
-                {{ trigger.from_state is not none and (
-                     trigger.to_state.state != trigger.from_state.state
-                     or trigger.to_state.attributes.get('temperature')
-                        != trigger.from_state.attributes.get('temperature')
-                   ) }}
               is_self_caused: >
                 {{ states(self_call_lockout_helper_id) == 'on' }}
           - choose:
-              - conditions: "{{ relevant_change and not is_self_caused }}"
+              - conditions: "{{ not is_self_caused }}"
                 sequence:
                   - action: input_datetime.set_datetime
                     target:
