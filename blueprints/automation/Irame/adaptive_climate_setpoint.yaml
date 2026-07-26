@@ -288,19 +288,15 @@ action:
         sequence:
           - variables:
               context_helper_id: !input manual_override_context_helper
-              timestamp_helper_id: !input manual_override_timestamp_helper
               context_comp: "{{ context.parent_id }}"
-              relevant_change: >
-                {{ trigger.from_state is not none and (
-                     trigger.to_state.state != trigger.from_state.state
-                     or trigger.to_state.attributes.get('temperature')
-                        != trigger.from_state.attributes.get('temperature')
-                   ) }}
+              is_fan_only_temp_change: >
+                {{ trigger.to_state.state == 'fan_only'
+                    and trigger.attribute == 'temperature' }}
               is_self_caused: >
                 {{ context_comp is not none
-                   and context_comp == states(context_helper_id) }}
+                    and context_comp == states(context_helper_id) }}
           - choose:
-              - conditions: "{{ not is_self_caused }}"
+              - conditions: "{{ not is_fan_only_temp_change and not is_self_caused }}"
                 sequence:
                   - action: input_datetime.set_datetime
                     target:
