@@ -156,17 +156,16 @@ blueprint:
       selector:
         time: {}
 
-    manual_override_context_helper:
-      name: Manual Override — Context Tracking Helper
+    self_call_lockout_helper:
+      name: Self Call Lockout Helper
       description: >
-        An input_text helper (max length 255) used internally to remember
-        this automation's own last context ID, so it can tell its own
-        temperature/mode changes apart from a manual change at the device.
-        Create one input_text helper and select it here. Do not share this
-        helper between multiple instances of this blueprint.
+        An input_boolean helper used to mark when the automation is changing
+        the climate device, so that it doesn't treat its own changes as manual
+        overrides. Create one input_boolean helper and select it here. Do not
+        share this helper between multiple instances of this blueprint.
       selector:
         entity:
-          domain: input_text
+          domain: input_boolean
 
     manual_override_timestamp_helper:
       name: Manual Override — Last Manual Change Helper
@@ -279,7 +278,7 @@ action:
       - conditions: "{{ trigger.id == 'climate_changed' }}"
         sequence:
           - variables:
-              context_helper_id: !input manual_override_context_helper
+              self_call_lockout_helper_id: !input self_call_lockout_helper
               timestamp_helper_id: !input manual_override_timestamp_helper
               relevant_change: >
                 {{ trigger.from_state is not none and (
@@ -288,8 +287,7 @@ action:
                         != trigger.from_state.attributes.get('temperature')
                    ) }}
               is_self_caused: >
-                {{ trigger.to_state.context.parent_id is not none
-                   and trigger.to_state.context.parent_id == states(context_helper_id) }}
+                {{ states(self_call_lockout_helper_id) == 'on' }}
           - choose:
               - conditions: "{{ relevant_change and not is_self_caused }}"
                 sequence:
@@ -312,7 +310,6 @@ action:
               weather_entity_id: !input weather_entity
               price_sensor_id: !input price_sensor
               outdoor_sensor_id: !input outdoor_sensor
-              context_helper_id: !input manual_override_context_helper
               timestamp_helper_id: !input manual_override_timestamp_helper
               override_duration_minutes: !input manual_override_duration_minutes
               climate_entities_list: !input climate_entities
@@ -433,11 +430,11 @@ action:
           - choose:
               - conditions: "{{ execute_now }}"
                 sequence:
-                  - action: input_text.set_value
+                  - action: input_boolean.set_value
                     target:
-                      entity_id: !input manual_override_context_helper
+                      entity_id: !input self_call_lockout_helper
                     data:
-                      value: "{{ this.context.id }}"
+                      value: "on"
                   - choose:
                       - conditions: "{{ should_be_off }}"
                         sequence:
@@ -470,3 +467,8 @@ action:
                               entity_id: !input climate_entities
                             data:
                               temperature: "{{ target_temp }}"
+                  - action: input_boolean.set_value
+                    target:
+                      entity_id: !input self_call_lockout_helper
+                    data:
+                      value: "off"
