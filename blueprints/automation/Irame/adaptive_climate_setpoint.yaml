@@ -156,16 +156,17 @@ blueprint:
       selector:
         time: {}
 
-    self_call_lockout_helper:
-      name: Self Call Lockout Helper
+    manual_override_context_helper:
+      name: Manual Override — Context Tracking Helper
       description: >
-        An input_boolean helper used to mark when the automation is changing
-        the climate device, so that it doesn't treat its own changes as manual
-        overrides. Create one input_boolean helper and select it here. Do not
-        share this helper between multiple instances of this blueprint.
+        An input_text helper (max length 255) used internally to remember
+        this automation's own last context ID, so it can tell its own
+        temperature/mode changes apart from a manual change at the device.
+        Create one input_text helper and select it here. Do not share this
+        helper between multiple instances of this blueprint.
       selector:
         entity:
-          domain: input_boolean
+          domain: input_text
 
     manual_override_timestamp_helper:
       name: Manual Override — Last Manual Change Helper
@@ -286,9 +287,19 @@ action:
       - conditions: "{{ trigger.id == 'climate_changed' }}"
         sequence:
           - variables:
-              self_call_lockout_helper_id: !input self_call_lockout_helper
+              context_helper_id: !input manual_override_context_helper
+              timestamp_helper_id: !input manual_override_timestamp_helper
+              context_comp: "{{ context.parent_id }}"
+              relevant_change: >
+                {{ trigger.from_state is not none and (
+                     trigger.to_state.state != trigger.from_state.state
+                     or trigger.to_state.attributes.get('temperature')
+                        != trigger.from_state.attributes.get('temperature')
+                   ) }}
               is_self_caused: >
-                {{ states(self_call_lockout_helper_id) == 'on' }}
+                {{ trigger.from_state is not none
+                   and trigger.from_state.context.id is not none
+                   and trigger.from_state.context.id == states(context_helper_id) }}
           - choose:
               - conditions: "{{ not is_self_caused }}"
                 sequence:
@@ -431,9 +442,11 @@ action:
           - choose:
               - conditions: "{{ execute_now }}"
                 sequence:
-                  - action: input_boolean.turn_on
+                  - action: input_text.set_value
                     target:
-                      entity_id: !input self_call_lockout_helper
+                      entity_id: !input manual_override_context_helper
+                    data:
+                      value: "{{ context.id }}"
                   - choose:
                       - conditions: "{{ should_be_off }}"
                         sequence:
@@ -466,6 +479,3 @@ action:
                               entity_id: !input climate_entities
                             data:
                               temperature: "{{ target_temp }}"
-                  - action: input_boolean.turn_off
-                    target:
-                      entity_id: !input self_call_lockout_helper
