@@ -3,9 +3,10 @@ blueprint:
   description: >
     Chooses heating, cooling, or off based on today's forecasted high relative
     to separate cooling/heating baselines, scales the target temperature by
-    severity and electricity price, shuts off at night, during the dead band,
-    or when the live outdoor temperature makes running pointless, and pauses
-    itself for a configurable cooldown after any manual change at the device.
+    severity and electricity price, shuts off at night, on selected weekdays,
+    during the dead band, or when the live outdoor temperature makes running
+    pointless, and pauses itself for a configurable cooldown after any manual
+    change at the device.
   domain: automation
   source_url: https://github.com/Irame/HomeAssistantBlueprints/blob/master/blueprints/automation/Irame/adaptive_climate_setpoint.yaml
   input:
@@ -135,6 +136,34 @@ blueprint:
       default: "06:00:00"
       selector:
         time: {}
+
+    disabled_weekdays:
+      name: Disabled Weekdays
+      description: >
+        Optional. On these days the climate device is forced off for the
+        entire day, the same way night mode works — it just always evaluates
+        as "should be off" regardless of the forecast. Leave empty to run
+        every day.
+      default: []
+      selector:
+        select:
+          multiple: true
+          mode: list
+          options:
+            - label: Monday
+              value: "0"
+            - label: Tuesday
+              value: "1"
+            - label: Wednesday
+              value: "2"
+            - label: Thursday
+              value: "3"
+            - label: Friday
+              value: "4"
+            - label: Saturday
+              value: "5"
+            - label: Sunday
+              value: "6"
 
     forecast_high_helper:
       name: Forecast High Storage Helper
@@ -332,6 +361,9 @@ action:
               outdoor_cold_ref: !input outdoor_cold_ref
               price_weight: !input price_weight
 
+              disabled_weekdays_list: !input disabled_weekdays
+              is_disabled_day: "{{ now().weekday() | string in disabled_weekdays_list }}"
+
               manual_override_active: >
                 {{ (as_timestamp(now()) - as_timestamp(states(timestamp_helper_id), 0))
                    < (override_duration_minutes * 60) }}
@@ -405,7 +437,7 @@ action:
                 {{ door_window_entities | length > 0
                    and (expand(door_window_entities) | selectattr('state', 'eq', 'on') | list | count) > 0 }}
 
-              should_be_off: "{{ window_open or is_night or day_type == 'off' or outdoor_override_off }}"
+              should_be_off: "{{ window_open or is_night or is_disabled_day or day_type == 'off' or outdoor_override_off }}"
 
               first_climate_entity: "{{ climate_entities_list[0] }}"
               current_mode: "{{ states(first_climate_entity) }}"
