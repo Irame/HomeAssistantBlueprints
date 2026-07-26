@@ -110,6 +110,20 @@ blueprint:
                 - label: Sunday
                   value: "6"
 
+        presence_entities:
+          name: Presence Tracking
+          description: >
+            Optional. person or device_tracker entities to watch. If at
+            least one is selected and none of them are "home", the climate
+            device is forced off. Leave empty to ignore presence entirely.
+          default: []
+          selector:
+            entity:
+              domain:
+                - person
+                - device_tracker
+              multiple: true
+
     price:
       name: Electricity Price
       icon: mdi:currency-eur
@@ -312,6 +326,9 @@ trigger:
   - id: refresh
     platform: state
     entity_id: !input door_window_sensors
+  - id: refresh
+    platform: state
+    entity_id: !input presence_entities
   - id: capture_forecast
     platform: time
     at: !input forecast_capture_time
@@ -404,6 +421,11 @@ action:
               disabled_weekdays_list: !input disabled_weekdays
               is_disabled_day: "{{ now().weekday() | string in disabled_weekdays_list }}"
 
+              presence_entities: !input presence_entities
+              everyone_away: >
+                {{ presence_entities | length > 0
+                   and (expand(presence_entities) | selectattr('state', 'eq', 'home') | list | count) == 0 }}
+
               manual_override_active: >
                 {{ (as_timestamp(now()) - as_timestamp(states(timestamp_helper_id), 0))
                    < (override_duration_minutes * 60) }}
@@ -477,7 +499,7 @@ action:
                 {{ door_window_entities | length > 0
                    and (expand(door_window_entities) | selectattr('state', 'eq', 'on') | list | count) > 0 }}
 
-              should_be_off: "{{ window_open or is_night or is_disabled_day or day_type == 'off' or outdoor_override_off }}"
+              should_be_off: "{{ window_open or is_night or is_disabled_day or everyone_away or day_type == 'off' or outdoor_override_off }}"
 
               first_climate_entity: "{{ climate_entities_list[0] }}"
               current_mode: "{{ states(first_climate_entity) }}"
