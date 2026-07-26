@@ -289,14 +289,14 @@ action:
           - variables:
               context_helper_id: !input manual_override_context_helper
               context_comp: "{{ context.parent_id }}"
-              is_fan_only_temp_change: >
-                {{ trigger.to_state.state == 'fan_only'
+              is_side_effect_temp_change: >
+                {{ trigger.to_state.state in ['fan_only', 'dry', 'off']
                     and trigger.attribute == 'temperature' }}
               is_self_caused: >
                 {{ context_comp is not none
                     and context_comp == states(context_helper_id) }}
           - choose:
-              - conditions: "{{ not is_fan_only_temp_change and not is_self_caused }}"
+              - conditions: "{{ not is_side_effect_temp_change and not is_self_caused }}"
                 sequence:
                   - action: input_datetime.set_datetime
                     target:
