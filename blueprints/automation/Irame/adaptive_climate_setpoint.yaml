@@ -10,258 +10,298 @@ blueprint:
   domain: automation
   source_url: https://github.com/Irame/HomeAssistantBlueprints/blob/master/blueprints/automation/Irame/adaptive_climate_setpoint.yaml
   input:
-    climate_entities:
-      name: Climate Entities
-      description: The climate devices this automation should control.
-      selector:
-        entity:
-          domain: climate
-          multiple: true
+    comfort_setpoints:
+      name: Comfort Setpoints
+      icon: mdi:thermometer
+      description: The temperature targets and baselines this automation scales between.
+      collapsed: false
+      input:
+        cool_setpoint_min:
+          name: Cooling Setpoint Min
+          description: Most aggressive cooling target (coldest allowed) on the hottest days.
+          default: 21
+          selector:
+            number:
+              min: 15
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
 
-    weather_entity:
-      name: Weather Entity
-      description: Used to read today's forecasted high temperature.
-      selector:
-        entity:
-          domain: weather
+        cool_setpoint_baseline:
+          name: Cooling Setpoint Baseline
+          description: Where cooling starts from (severity 0) once a day is classified as a cooling day.
+          default: 24
+          selector:
+            number:
+              min: 15
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
 
-    price_sensor:
-      name: Electricity Price Sensor
+        heat_setpoint_baseline:
+          name: Heating Setpoint Baseline
+          description: Where heating starts from (severity 0) once a day is classified as a heating day.
+          default: 21
+          selector:
+            number:
+              min: 15
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
+        heat_setpoint_max:
+          name: Heating Setpoint Max
+          description: Most aggressive heating target (warmest allowed) on the coldest days.
+          default: 26
+          selector:
+            number:
+              min: 15
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
+    schedule:
+      name: Schedule
+      icon: mdi:calendar-clock
+      description: When the system is allowed to run at all.
+      collapsed: false
+      input:
+        night_start:
+          name: Night Mode Start
+          default: "22:00:00"
+          selector:
+            time: {}
+
+        night_end:
+          name: Night Mode End
+          default: "06:00:00"
+          selector:
+            time: {}
+
+        disabled_weekdays:
+          name: Disabled Weekdays
+          description: >
+            Optional. On these days the climate device is forced off for the
+            entire day, the same way night mode works - it just always
+            evaluates as "should be off" regardless of the forecast. Leave
+            empty to run every day.
+          default: []
+          selector:
+            select:
+              multiple: true
+              mode: list
+              options:
+                - label: Monday
+                  value: "0"
+                - label: Tuesday
+                  value: "1"
+                - label: Wednesday
+                  value: "2"
+                - label: Thursday
+                  value: "3"
+                - label: Friday
+                  value: "4"
+                - label: Saturday
+                  value: "5"
+                - label: Sunday
+                  value: "6"
+
+    price:
+      name: Electricity Price
+      icon: mdi:currency-eur
+      description: How much today's live price should temper the target temperature.
+      collapsed: false
+      input:
+        price_weight:
+          name: Electricity Price Influence
+          description: 0 = ignore price entirely, 1 = full influence.
+          default: 0.5
+          selector:
+            number:
+              min: 0
+              max: 1
+              step: 0.1
+              mode: slider
+
+    advanced_tuning:
+      name: Advanced Tuning
+      icon: mdi:tune
       description: >
-        Your Tibber (or similar) current-price sensor. Must expose min_price
-        and max_price attributes for today.
-      selector:
-        entity:
-          domain: sensor
+        Reference points and timing guards. Defaults are sensible for most
+        setups. Adjust only if you know what you're changing.
+      collapsed: true
+      input:
+        outdoor_hot_ref:
+          name: Hot Day Reference
+          description: Forecasted high at which cooling severity reaches maximum (1.0).
+          default: 30
+          selector:
+            number:
+              min: 20
+              max: 45
+              step: 1
+              unit_of_measurement: "°C"
+              mode: box
 
-    outdoor_sensor:
-      name: Outdoor Temperature Sensor
-      description: Live outdoor temperature used for the real-time override.
-      selector:
-        entity:
-          domain: sensor
-          device_class: temperature
+        outdoor_cold_ref:
+          name: Cold Day Reference
+          description: Forecasted high at which heating severity reaches maximum (1.0).
+          default: 5
+          selector:
+            number:
+              min: -20
+              max: 15
+              step: 1
+              unit_of_measurement: "°C"
+              mode: box
 
-    cool_setpoint_min:
-      name: Cooling Setpoint Min
-      description: Most aggressive cooling target (coldest allowed) on the hottest days.
-      default: 21
-      selector:
-        number:
-          min: 15
-          max: 30
-          step: 0.5
-          unit_of_measurement: "°C"
-          mode: box
+        forecast_capture_time:
+          name: Forecast Capture Time
+          description: >
+            Time of day to read and freeze the forecasted high. Pick an early
+            time, before today's peak temperature typically occurs.
+          default: "05:00:00"
+          selector:
+            time: {}
 
-    cool_setpoint_baseline:
-      name: Cooling Setpoint Baseline
-      description: Where cooling starts from (severity 0) once a day is classified as a cooling day.
-      default: 24
-      selector:
-        number:
-          min: 15
-          max: 30
-          step: 0.5
-          unit_of_measurement: "°C"
-          mode: box
+        manual_override_duration_minutes:
+          name: Manual Override Cooldown (minutes)
+          description: >
+            How long the automation pauses itself after detecting a manual
+            change to hvac_mode or target temperature at the device. Set to 0
+            to disable this guard entirely.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 720
+              step: 5
+              unit_of_measurement: minutes
+              mode: box
 
-    heat_setpoint_baseline:
-      name: Heating Setpoint Baseline
-      description: Where heating starts from (severity 0) once a day is classified as a heating day.
-      default: 21
-      selector:
-        number:
-          min: 15
-          max: 30
-          step: 0.5
-          unit_of_measurement: "°C"
-          mode: box
+        min_running_minutes:
+          name: Minimum Running Time (minutes)
+          description: >
+            Once switched to heat or cool, won't switch back to off for at
+            least this long. Set to 0 to disable.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: minutes
+              mode: box
 
-    heat_setpoint_max:
-      name: Heating Setpoint Max
-      description: Most aggressive heating target (warmest allowed) on the coldest days.
-      default: 26
-      selector:
-        number:
-          min: 15
-          max: 30
-          step: 0.5
-          unit_of_measurement: "°C"
-          mode: box
+        min_idle_minutes:
+          name: Minimum Idle Time (minutes)
+          description: >
+            Once switched off, won't switch back to heat or cool for at least
+            this long. Set to 0 to disable.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: minutes
+              mode: box
 
-    outdoor_hot_ref:
-      name: Hot Day Reference
-      description: Forecasted high at which cooling severity reaches maximum (1.0).
-      default: 30
-      selector:
-        number:
-          min: 20
-          max: 45
-          step: 1
-          unit_of_measurement: "°C"
-          mode: box
+    devices_and_sensors:
+      name: Devices & Sensors
+      icon: mdi:devices
+      description: The entities this automation reads from and controls.
+      collapsed: true
+      input:
+        climate_entities:
+          name: Climate Entities
+          description: The climate devices this automation should control.
+          selector:
+            entity:
+              domain: climate
+              multiple: true
 
-    outdoor_cold_ref:
-      name: Cold Day Reference
-      description: Forecasted high at which heating severity reaches maximum (1.0).
-      default: 5
-      selector:
-        number:
-          min: -20
-          max: 15
-          step: 1
-          unit_of_measurement: "°C"
-          mode: box
+        weather_entity:
+          name: Weather Entity
+          description: Used to read today's forecasted high temperature.
+          selector:
+            entity:
+              domain: weather
 
-    price_weight:
-      name: Electricity Price Influence
-      description: 0 = ignore price entirely, 1 = full influence.
-      default: 0.5
-      selector:
-        number:
-          min: 0
-          max: 1
-          step: 0.1
-          mode: slider
+        price_sensor:
+          name: Electricity Price Sensor
+          description: >
+            Your Tibber (or similar) current-price sensor. Must expose min_price
+            and max_price attributes for today.
+          selector:
+            entity:
+              domain: sensor
 
-    night_start:
-      name: Night Mode Start
-      default: "22:00:00"
-      selector:
-        time: {}
+        outdoor_sensor:
+          name: Outdoor Temperature Sensor
+          description: Live outdoor temperature used for the real-time override.
+          selector:
+            entity:
+              domain: sensor
+              device_class: temperature
 
-    night_end:
-      name: Night Mode End
-      default: "06:00:00"
-      selector:
-        time: {}
+        door_window_sensors:
+          name: Door/Window Sensors
+          description: >
+            Optional. If any of these is open, the climate device is forced off
+            immediately, bypassing the manual override cooldown. Select
+            binary_sensor entities (device class door or window). Leave empty
+            if you don't have any.
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
 
-    disabled_weekdays:
-      name: Disabled Weekdays
+    helpers:
+      name: Helper Entities
+      icon: mdi:tools
       description: >
-        Optional. On these days the climate device is forced off for the
-        entire day, the same way night mode works — it just always evaluates
-        as "should be off" regardless of the forecast. Leave empty to run
-        every day.
-      default: []
-      selector:
-        select:
-          multiple: true
-          mode: list
-          options:
-            - label: Monday
-              value: "0"
-            - label: Tuesday
-              value: "1"
-            - label: Wednesday
-              value: "2"
-            - label: Thursday
-              value: "3"
-            - label: Friday
-              value: "4"
-            - label: Saturday
-              value: "5"
-            - label: Sunday
-              value: "6"
+        input_number / input_text / input_datetime helpers this automation
+        needs for its own bookkeeping. Create one of each in
+        Settings, Devices & services, Helpers, then select them here.
+      collapsed: true
+      input:
+        forecast_high_helper:
+          name: Forecast High Storage Helper
+          description: >
+            An input_number helper used to store today's forecasted high once
+            per day, so later-day logic isn't affected by forecasts drifting
+            downward as the day progresses.
+          selector:
+            entity:
+              domain: input_number
 
-    forecast_high_helper:
-      name: Forecast High Storage Helper
-      description: >
-        An input_number helper used to store today's forecasted high once
-        per day, so later-day logic isn't affected by forecasts drifting
-        downward as the day progresses. Create one input_number helper and
-        select it here.
-      selector:
-        entity:
-          domain: input_number
+        manual_override_context_helper:
+          name: Manual Override - Context Tracking Helper
+          description: >
+            An input_text helper (max length 255) used internally to remember
+            this automation's own last context ID, so it can tell its own
+            temperature/mode changes apart from a manual change at the device.
+            Do not share this helper between multiple instances of this
+            blueprint.
+          selector:
+            entity:
+              domain: input_text
 
-    forecast_capture_time:
-      name: Forecast Capture Time
-      description: >
-        Time of day to read and freeze the forecasted high. Pick an early
-        time, before today's peak temperature typically occurs.
-      default: "05:00:00"
-      selector:
-        time: {}
-
-    manual_override_context_helper:
-      name: Manual Override — Context Tracking Helper
-      description: >
-        An input_text helper (max length 255) used internally to remember
-        this automation's own last context ID, so it can tell its own
-        temperature/mode changes apart from a manual change at the device.
-        Create one input_text helper and select it here. Do not share this
-        helper between multiple instances of this blueprint.
-      selector:
-        entity:
-          domain: input_text
-
-    manual_override_timestamp_helper:
-      name: Manual Override — Last Manual Change Helper
-      description: >
-        An input_datetime helper (date + time) used to store when a manual
-        change was last detected. Create one input_datetime helper and
-        select it here. Do not share this helper between multiple instances
-        of this blueprint.
-      selector:
-        entity:
-          domain: input_datetime
-
-    manual_override_duration_minutes:
-      name: Manual Override Cooldown (minutes)
-      description: >
-        How long the automation pauses itself after detecting a manual
-        change to hvac_mode or target temperature at the device. Set to 0
-        to disable this guard entirely.
-      default: 60
-      selector:
-        number:
-          min: 0
-          max: 720
-          step: 5
-          unit_of_measurement: minutes
-          mode: box
-
-    door_window_sensors:
-      name: Door/Window Sensors
-      description: >
-        Optional. If any of these is open, the climate device is forced off
-        immediately — bypassing the manual override cooldown. Select binary_sensor entities (device
-        class door or window). Leave empty if you don't have any.
-      default: []
-      selector:
-        entity:
-          domain: binary_sensor
-          multiple: true
-
-    min_running_minutes:
-      name: Minimum Running Time (minutes)
-      description: >
-        Once switched to heat or cool, won't switch back to off for at
-        least this long. Set to 0 to disable.
-      default: 3
-      selector:
-        number:
-          min: 0
-          max: 30
-          step: 1
-          unit_of_measurement: minutes
-          mode: box
-
-    min_idle_minutes:
-      name: Minimum Idle Time (minutes)
-      description: >
-        Once switched off, won't switch back to heat or cool for at least
-        this long. Set to 0 to disable.
-      default: 3
-      selector:
-        number:
-          min: 0
-          max: 30
-          step: 1
-          unit_of_measurement: minutes
-          mode: box
+        manual_override_timestamp_helper:
+          name: Manual Override - Last Manual Change Helper
+          description: >
+            An input_datetime helper (date + time) used to store when a manual
+            change was last detected. Do not share this helper between
+            multiple instances of this blueprint.
+          selector:
+            entity:
+              domain: input_datetime
 
 mode: queued
 max: 10
