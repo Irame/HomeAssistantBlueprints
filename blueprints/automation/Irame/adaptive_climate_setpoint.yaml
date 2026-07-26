@@ -297,9 +297,8 @@ action:
                         != trigger.from_state.attributes.get('temperature')
                    ) }}
               is_self_caused: >
-                {{ trigger.from_state is not none
-                   and trigger.from_state.context.id is not none
-                   and trigger.from_state.context.id == states(context_helper_id) }}
+                {{ context_comp is not none
+                   and context_comp == states(context_helper_id) }}
           - choose:
               - conditions: "{{ not is_self_caused }}"
                 sequence:
