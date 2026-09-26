@@ -721,13 +721,16 @@ action:
                   {{ now_t >= night_start_t or now_t < night_end_t }}
                 {% endif %}
 
+              # Compared against the indoor setpoints, not the day thresholds:
+              # this asks "is running pointless right now", which is a question
+              # about the room's target, not about how the day was classified.
               outdoor_override_off: >
                 {% if not outdoor_valid %}
                   false
                 {% elif day_type == 'cool' %}
-                  {{ current_outdoor_temp <= cool_day_threshold }}
+                  {{ current_outdoor_temp <= cool_setpoint_baseline }}
                 {% elif day_type == 'heat' %}
-                  {{ current_outdoor_temp >= heat_day_threshold }}
+                  {{ current_outdoor_temp >= heat_setpoint_baseline }}
                 {% else %}
                   false
                 {% endif %}
