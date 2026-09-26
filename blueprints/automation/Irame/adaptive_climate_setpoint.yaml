@@ -141,6 +141,53 @@ blueprint:
               step: 0.1
               mode: slider
 
+        price_reference_mode:
+          name: Price Reference
+          description: >
+            How "cheap" and "expensive" are determined. "Fixed thresholds"
+            uses the two absolute prices below, so a day that is expensive
+            from morning to night stays expensive. "Today's min/max" scales
+            against the cheapest and most expensive hour of the current day,
+            which always reports some hour as cheap even when every hour is
+            costly.
+          default: fixed
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Fixed thresholds
+                  value: fixed
+                - label: Today's min/max (price sensor attributes)
+                  value: daily
+
+        price_cheap:
+          name: Cheap Price Threshold
+          description: >
+            At or below this price, electricity counts as fully cheap. Use the
+            same unit your price sensor reports (e.g. EUR/kWh). Only used when
+            Price Reference is set to "Fixed thresholds".
+          default: 0.20
+          selector:
+            number:
+              min: 0
+              max: 5
+              step: 0.01
+              mode: box
+
+        price_expensive:
+          name: Expensive Price Threshold
+          description: >
+            At or above this price, electricity counts as fully expensive. Use
+            the same unit your price sensor reports (e.g. EUR/kWh). Only used
+            when Price Reference is set to "Fixed thresholds".
+          default: 0.35
+          selector:
+            number:
+              min: 0
+              max: 5
+              step: 0.01
+              mode: box
+
     advanced_tuning:
       name: Advanced Tuning
       icon: mdi:tune
@@ -429,9 +476,23 @@ action:
               max_temp_today_from_now: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
               current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
 
+              price_reference_mode: !input price_reference_mode
+              price_cheap: !input price_cheap
+              price_expensive: !input price_expensive
+
               current_price: "{{ states(price_sensor_id) | float(0) }}"
-              min_price: "{{ state_attr(price_sensor_id, 'min_price') | float(0) }}"
-              max_price: "{{ state_attr(price_sensor_id, 'max_price') | float(1) }}"
+              price_low_ref: >
+                {% if price_reference_mode == 'fixed' %}
+                  {{ price_cheap }}
+                {% else %}
+                  {{ state_attr(price_sensor_id, 'min_price') | float(0) }}
+                {% endif %}
+              price_high_ref: >
+                {% if price_reference_mode == 'fixed' %}
+                  {{ price_expensive }}
+                {% else %}
+                  {{ state_attr(price_sensor_id, 'max_price') | float(1) }}
+                {% endif %}
 
               day_type: >
                 {% if max_temp_today > cool_setpoint_baseline %}
@@ -453,7 +514,9 @@ action:
               severity: "{{ [[raw_severity | float, 0] | max, 1] | min }}"
 
               price_factor: >
-                {{ ((current_price - min_price) / ((max_price - min_price) if max_price != min_price else 1)) }}
+                {% set lo = price_low_ref | float(0) %}
+                {% set hi = price_high_ref | float(0) %}
+                {{ ((current_price - lo) / (hi - lo)) if hi > lo else 0 }}
               price_factor_clamped: "{{ [[price_factor | float, 0] | max, 1] | min }}"
 
               dampening: "{{ 1 - (price_weight * price_factor_clamped) }}"
