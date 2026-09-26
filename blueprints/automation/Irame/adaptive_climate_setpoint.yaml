@@ -626,6 +626,8 @@ action:
                 {% else %}
                   {{ cool_setpoint_baseline }}
                 {% endif %}
+              # Kept at 0.5 here; the per-device step is applied later, once
+              # the entity that will receive the value is known.
               target_temp: "{{ ((target_temp_raw | float * 2) | round(0) / 2) }}"
 
               night_start_str: !input night_start
@@ -690,6 +692,21 @@ action:
 
               desired_mode: "{{ 'off' if should_be_off else day_type }}"
 
+              # The setpoint each device should actually receive: snapped to
+              # that device's own step and clamped to its own range, so a
+              # storage boost can never ask for a value it would reject.
+              entity_targets: >
+                {% set ns = namespace(d={}) %}
+                {% for e in climate_entities_list %}
+                  {% set lo = state_attr(e, 'min_temp') | float(7) %}
+                  {% set hi = state_attr(e, 'max_temp') | float(35) %}
+                  {% set raw_step = state_attr(e, 'target_temp_step') | float(0.5) %}
+                  {% set step = raw_step if raw_step > 0 else 0.5 %}
+                  {% set snapped = (((target_temp | float) / step) | round(0)) * step %}
+                  {% set ns.d = dict(ns.d, **{e: [[snapped, lo] | max, hi] | min}) %}
+                {% endfor %}
+                {{ ns.d }}
+
               # Only touch the devices when the command would actually change
               # something. Re-sending the same mode and setpoint every minute
               # spams the devices and fills the recorder for nothing.
@@ -698,13 +715,10 @@ action:
                 {% for e in climate_entities_list %}
                   {% if not is_state(e, desired_mode) %}
                     {% set ns.v = true %}
-                  {% elif desired_mode != 'off' %}
-                    {% set lo = state_attr(e, 'min_temp') | float(7) %}
-                    {% set hi = state_attr(e, 'max_temp') | float(35) %}
-                    {% set want = [[target_temp | float, lo] | max, hi] | min %}
-                    {% if (state_attr(e, 'temperature') | float(-999) - want) | abs > 0.05 %}
-                      {% set ns.v = true %}
-                    {% endif %}
+                  {% elif desired_mode != 'off'
+                          and (state_attr(e, 'temperature') | float(-999)
+                               - entity_targets[e]) | abs > 0.05 %}
+                    {% set ns.v = true %}
                   {% endif %}
                 {% endfor %}
                 {{ ns.v }}
@@ -738,12 +752,7 @@ action:
                   sequence:
                     - variables:
                         entity: "{{ repeat.item }}"
-                        # Respect what the device itself accepts, so a storage
-                        # boost can never push the setpoint out of range.
-                        entity_target: >
-                          {% set lo = state_attr(repeat.item, 'min_temp') | float(7) %}
-                          {% set hi = state_attr(repeat.item, 'max_temp') | float(35) %}
-                          {{ [[target_temp | float, lo] | max, hi] | min }}
+                        entity_target: "{{ entity_targets[repeat.item] }}"
                     - if: "{{ not is_state(entity, desired_mode) }}"
                       then:
                         - action: climate.set_hvac_mode
