@@ -693,6 +693,27 @@ action:
                   {{ (not is_currently_off) or min_idle_elapsed }}
                 {% endif %}
 
+              desired_mode: "{{ 'off' if should_be_off else day_type }}"
+
+              # Only touch the devices when the command would actually change
+              # something. Re-sending the same mode and setpoint every minute
+              # spams the devices and fills the recorder for nothing.
+              needs_change: >
+                {% set ns = namespace(v=false) %}
+                {% for e in climate_entities_list %}
+                  {% if not is_state(e, desired_mode) %}
+                    {% set ns.v = true %}
+                  {% elif desired_mode != 'off' %}
+                    {% set lo = state_attr(e, 'min_temp') | float(7) %}
+                    {% set hi = state_attr(e, 'max_temp') | float(35) %}
+                    {% set want = [[target_temp | float, lo] | max, hi] | min %}
+                    {% if (state_attr(e, 'temperature') | float(-999) - want) | abs > 0.05 %}
+                      {% set ns.v = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.v }}
+
               execute_now: "{{ (window_open or not manual_override_active) and timing_guard_ok }}"
 
           - if: "{{ not forecast_valid }}"
@@ -710,43 +731,38 @@ action:
                     data:
                       timestamp: 0
 
-          - choose:
-              - conditions: "{{ execute_now }}"
-                sequence:
-                  - action: input_text.set_value
-                    target:
-                      entity_id: !input manual_override_context_helper
-                    data:
-                      value: "{{ context.id }}"
-                  - choose:
-                      - conditions: "{{ should_be_off }}"
-                        sequence:
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: !input climate_entities
-                            data:
-                              hvac_mode: "off"
-                      - conditions: "{{ not should_be_off and day_type == 'cool' }}"
-                        sequence:
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: !input climate_entities
-                            data:
-                              hvac_mode: cool
-                          - action: climate.set_temperature
-                            target:
-                              entity_id: !input climate_entities
-                            data:
-                              temperature: "{{ target_temp }}"
-                      - conditions: "{{ not should_be_off and day_type == 'heat' }}"
-                        sequence:
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: !input climate_entities
-                            data:
-                              hvac_mode: heat
-                          - action: climate.set_temperature
-                            target:
-                              entity_id: !input climate_entities
-                            data:
-                              temperature: "{{ target_temp }}"
+          - if: "{{ execute_now and needs_change }}"
+            then:
+              - action: input_text.set_value
+                target:
+                  entity_id: !input manual_override_context_helper
+                data:
+                  value: "{{ context.id }}"
+              - repeat:
+                  for_each: "{{ climate_entities_list }}"
+                  sequence:
+                    - variables:
+                        entity: "{{ repeat.item }}"
+                        # Respect what the device itself accepts, so a storage
+                        # boost can never push the setpoint out of range.
+                        entity_target: >
+                          {% set lo = state_attr(repeat.item, 'min_temp') | float(7) %}
+                          {% set hi = state_attr(repeat.item, 'max_temp') | float(35) %}
+                          {{ [[target_temp | float, lo] | max, hi] | min }}
+                    - if: "{{ not is_state(entity, desired_mode) }}"
+                      then:
+                        - action: climate.set_hvac_mode
+                          target:
+                            entity_id: "{{ entity }}"
+                          data:
+                            hvac_mode: "{{ desired_mode }}"
+                    - if: >
+                        {{ desired_mode != 'off'
+                           and (state_attr(entity, 'temperature') | float(-999)
+                                - (entity_target | float)) | abs > 0.05 }}
+                      then:
+                        - action: climate.set_temperature
+                          target:
+                            entity_id: "{{ entity }}"
+                          data:
+                            temperature: "{{ entity_target | float }}"
