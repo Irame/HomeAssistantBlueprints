@@ -30,7 +30,8 @@ blueprint:
           name: Cooling - Comfort
           description: >
             What you actually want on a cooling day at a neutral electricity
-            price. The target sits exactly here when price influence is 0.
+            price. Set Charge and Coast to this same value to pin the target
+            here and ignore price entirely.
           default: 24
           selector:
             number:
@@ -178,26 +179,12 @@ blueprint:
       name: Electricity Price
       icon: mdi:currency-eur
       description: >
-        How far the price is allowed to slide the target along the comfort
-        axis.
+        What counts as cheap and expensive. How far the target may then travel
+        is set by the Charge and Coast temperatures under Comfort Setpoints -
+        move those toward Comfort to give price less say, or onto Comfort to
+        give it none.
       collapsed: false
       input:
-        price_weight:
-          name: Electricity Price Influence
-          description: >
-            How much of the Charge..Coast range the price may actually use.
-            1 = the target can reach both anchors, 0.5 = it only ever travels
-            halfway, 0 = the target sits on Comfort and price is ignored.
-            Leave this at 1 and express what you will tolerate through the
-            Charge and Coast temperatures instead.
-          default: 1.0
-          selector:
-            number:
-              min: 0
-              max: 1
-              step: 0.1
-              mode: slider
-
         price_forecast_sensor:
           name: Forward Average Price Sensor
           description: >
@@ -761,7 +748,6 @@ action:
               heat_coast: !input heat_coast
               cool_day_threshold: !input cool_day_threshold
               heat_day_threshold: !input heat_day_threshold
-              price_weight: !input price_weight
 
               disabled_weekdays_list: !input disabled_weekdays
               is_disabled_day: "{{ now().weekday() | string in disabled_weekdays_list }}"
@@ -860,8 +846,10 @@ action:
                 {% else %}
                   {{ price_signal_absolute | float }}
                 {% endif %}
+              # Both halves are already clamped to -1..1, so this only guards
+              # the contract for anything added to price_signal_raw later.
               price_signal: >
-                {{ [[(price_signal_raw | float) * (price_weight | float), -1] | max, 1] | min }}
+                {{ [[price_signal_raw | float, -1] | max, 1] | min }}
 
               # Anchors for whichever mode today is running.
               anchor_comfort: "{{ cool_comfort if day_type == 'cool' else heat_comfort }}"
@@ -953,8 +941,7 @@ action:
               # cheaper than the hours that follow.
               price_is_cheap: "{{ (price_factor_clamped | float) <= 0 }}"
               storage_charging: >
-                {{ (price_weight | float) > 0
-                   and price_is_cheap
+                {{ price_is_cheap
                    and (price_signal | float) < 0
                    and day_type != 'off'
                    and (effective_charge | float) != (anchor_comfort | float) }}
