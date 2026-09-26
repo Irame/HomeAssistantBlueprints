@@ -14,7 +14,7 @@ Automatically switches your climate devices between heating, cooling, and off, a
 - **Night mode** — forces the device off during a configurable overnight window.
 - **Live outdoor temperature** — turns the device off mid-run if the outdoor temperature already satisfies the target (e.g. it's already colder outside than the cooling target), avoiding pointless standby operation.
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FIrame%2FHomeAssistantBlueprints%2Fblob%2Fmain%2Fblueprints%2Fautomation%2FIrame%2Fadaptive_climate_setpoint.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FIrame%2FHomeAssistantBlueprints%2Fblob%2Fmaster%2Fblueprints%2Fautomation%2FIrame%2Fadaptive_climate_setpoint.yaml)
 
 #### Requirements
 
@@ -55,7 +55,7 @@ Note: `Cooling Setpoint Baseline` must be greater than `Heating Setpoint Baselin
 
 1. Click the import badge above, **or** manually go to **Settings → Automations & Scenes → Blueprints tab → Import Blueprint**, and paste:
    ```
-   https://github.com/Irame/HomeAssistantBlueprints/blob/main/blueprints/automation/Irame/adaptive_climate_setpoint.yaml
+   https://github.com/Irame/HomeAssistantBlueprints/blob/master/blueprints/automation/Irame/adaptive_climate_setpoint.yaml
    ```
 2. Click **Preview**, then **Import Blueprint**.
 3. Go to **Settings → Automations & Scenes → Create Automation → Use Blueprint**, select **Adaptive Climate Setpoint (Forecast + Tibber Price)**, and fill in your entities and setpoints.
