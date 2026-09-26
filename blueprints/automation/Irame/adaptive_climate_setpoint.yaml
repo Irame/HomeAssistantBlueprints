@@ -417,6 +417,24 @@ blueprint:
               unit_of_measurement: minutes
               mode: box
 
+        indoor_deadband:
+          name: Indoor Deadband
+          description: >
+            How far past the target the rooms must go before the device is
+            held off, and how far back they must drift before it runs again.
+            Only used when Indoor Temperature Sensors are set. Tight values
+            cycle the compressor, which an inverter unit dislikes and which
+            costs more than letting it modulate - 1 K or more is usually
+            kinder than precise control.
+          default: 1.0
+          selector:
+            number:
+              min: 0.2
+              max: 5
+              step: 0.1
+              unit_of_measurement: "K"
+              mode: box
+
         min_running_minutes:
           name: Minimum Running Time (minutes)
           description: >
@@ -475,6 +493,23 @@ blueprint:
           selector:
             entity:
               domain: sensor
+
+        indoor_sensors:
+          name: Indoor Temperature Sensors
+          description: >
+            Optional. Sensors that actually represent the rooms this instance
+            serves - one hallway sensor covering several rooms works well, and
+            more can be added at any time. Their mean is compared against the
+            current target, and the device is held off while the rooms are
+            already past it, which a unit's own thermostat often cannot judge
+            because it sits in its own airflow. Unavailable sensors are simply
+            skipped. Leave empty to let each device's thermostat decide alone.
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              device_class: temperature
+              multiple: true
 
         outdoor_sensor:
           name: Outdoor Temperature Sensor
@@ -925,8 +960,49 @@ action:
                    and (effective_charge | float) != (anchor_comfort | float) }}
               storage_bypass: "{{ storage_overrides_schedule and storage_charging }}"
 
+              # Measured room temperature, against the target actually in force
+              # - so while charging this asks whether the charge has landed,
+              # not whether the room is merely comfortable.
+              indoor_sensor_list: !input indoor_sensors
+              indoor_deadband: !input indoor_deadband
+              indoor_readings: >
+                {% set ns = namespace(t=[]) %}
+                {% for e in indoor_sensor_list %}
+                  {% if states(e) | is_number %}
+                    {% set ns.t = ns.t + [states(e) | float] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.t }}
+              indoor_valid: "{{ indoor_readings | count > 0 }}"
+              indoor_temp: >
+                {{ (indoor_readings | sum / indoor_readings | count)
+                   if indoor_valid else 0 }}
+              # Real hysteresis rather than one threshold: the device runs
+              # until the room is a deadband past the target, then stays off
+              # until the room has drifted all the way back to it.
+              indoor_satisfied: >
+                {% if not indoor_valid %}
+                  false
+                {% else %}
+                  {% set t = target_temp | float %}
+                  {% set i = indoor_temp | float %}
+                  {% set db = indoor_deadband | float %}
+                  {% set idle = is_state(climate_entities_list[0], 'off') %}
+                  {% if day_type == 'cool' %}
+                    {{ (i < t) if idle else (i <= t - db) }}
+                  {% elif day_type == 'heat' %}
+                    {{ (i > t) if idle else (i >= t + db) }}
+                  {% else %}
+                    false
+                  {% endif %}
+                {% endif %}
+
+              # indoor_satisfied is never bypassed by storage: if the rooms have
+              # already reached the charge target, the charge is in the building
+              # and running on would only overshoot it.
               should_be_off: >
                 {{ window_open or is_disabled_day or everyone_away or day_type == 'off'
+                   or indoor_satisfied
                    or ((is_night or outdoor_override_off) and not storage_bypass) }}
 
               first_climate_entity: "{{ climate_entities_list[0] }}"
