@@ -544,8 +544,12 @@ action:
                 {{ (as_timestamp(now()) - as_timestamp(states(timestamp_helper_id), 0))
                    < (override_duration_minutes * 60) }}
 
-              max_temp_today: "{{ states(forecast_high_helper_id) | float }}"
-              max_temp_today_from_now: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
+              forecast_valid: "{{ states(forecast_high_helper_id) | is_number }}"
+              outdoor_valid: "{{ states(outdoor_sensor_id) | is_number }}"
+              price_valid: "{{ states(price_sensor_id) | is_number }}"
+
+              max_temp_today: "{{ states(forecast_high_helper_id) | float(0) }}"
+              max_temp_today_from_now: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float(max_temp_today) }}"
               current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
 
               price_reference_mode: !input price_reference_mode
@@ -590,7 +594,11 @@ action:
               price_factor: >
                 {% set lo = price_low_ref | float(0) %}
                 {% set hi = price_high_ref | float(0) %}
-                {{ ((current_price - lo) / (hi - lo)) if hi > lo else 0 }}
+                {% if not price_valid %}
+                  1
+                {% else %}
+                  {{ ((current_price - lo) / (hi - lo)) if hi > lo else 0 }}
+                {% endif %}
               price_factor_clamped: "{{ [[price_factor | float, 0] | max, 1] | min }}"
 
               dampening: "{{ 1 - (price_weight * price_factor_clamped) }}"
@@ -624,7 +632,9 @@ action:
                 {% endif %}
 
               outdoor_override_off: >
-                {% if day_type == 'cool' %}
+                {% if not outdoor_valid %}
+                  false
+                {% elif day_type == 'cool' %}
                   {{ current_outdoor_temp <= cool_day_threshold }}
                 {% elif day_type == 'heat' %}
                   {{ current_outdoor_temp >= heat_day_threshold }}
@@ -653,7 +663,11 @@ action:
               current_mode: "{{ states(first_climate_entity) }}"
               is_currently_off: "{{ current_mode == 'off' }}"
               seconds_in_current_state: >
-                {{ (as_timestamp(now()) - as_timestamp(states[first_climate_entity].last_changed)) }}
+                {% if states[first_climate_entity] is not none %}
+                  {{ as_timestamp(now()) - as_timestamp(states[first_climate_entity].last_changed) }}
+                {% else %}
+                  0
+                {% endif %}
 
               min_run_elapsed: "{{ seconds_in_current_state >= (min_running_minutes | float * 60) }}"
               min_idle_elapsed: "{{ seconds_in_current_state >= (min_idle_minutes | float * 60) }}"
@@ -666,6 +680,12 @@ action:
                 {% endif %}
 
               execute_now: "{{ (window_open or not manual_override_active) and timing_guard_ok }}"
+
+          - if: "{{ not forecast_valid }}"
+            then:
+              - stop: >
+                  Forecast high helper holds no number yet - waiting for the
+                  next forecast capture.
 
           - choose:
               - conditions: "{{ window_open }}"
