@@ -214,6 +214,18 @@ blueprint:
               unit_of_measurement: "°C"
               mode: box
 
+        storage_overrides_schedule:
+          name: Charge Outside Normal Hours
+          description: >
+            While the price is at or below the cheap threshold, ignore night
+            mode and the live outdoor temperature override so the building can
+            actually be charged during the cheapest hours - which are often at
+            night. Open windows, disabled weekdays and absence still force the
+            device off. Leave off if running at night would be too noisy.
+          default: false
+          selector:
+            boolean: {}
+
     advanced_tuning:
       name: Advanced Tuning
       icon: mdi:tune
@@ -588,7 +600,18 @@ action:
                 {{ door_window_entities | length > 0
                    and (expand(door_window_entities) | selectattr('state', 'eq', 'on') | list | count) > 0 }}
 
-              should_be_off: "{{ window_open or is_night or is_disabled_day or everyone_away or day_type == 'off' or outdoor_override_off }}"
+              storage_overrides_schedule: !input storage_overrides_schedule
+              price_is_cheap: "{{ (price_factor_clamped | float) <= 0 }}"
+              storage_charging: >
+                {{ (storage_boost_degrees | float) > 0
+                   and (price_weight | float) > 0
+                   and price_is_cheap
+                   and day_type != 'off' }}
+              storage_bypass: "{{ storage_overrides_schedule and storage_charging }}"
+
+              should_be_off: >
+                {{ window_open or is_disabled_day or everyone_away or day_type == 'off'
+                   or ((is_night or outdoor_override_off) and not storage_bypass) }}
 
               first_climate_entity: "{{ climate_entities_list[0] }}"
               current_mode: "{{ states(first_climate_entity) }}"
