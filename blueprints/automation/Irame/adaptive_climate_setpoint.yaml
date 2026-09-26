@@ -518,15 +518,11 @@ action:
 
       - conditions: "{{ trigger.id == 'refresh' }}"
         sequence:
-          - action: weather.get_forecasts
-            target:
-              entity_id: !input weather_entity
-            data:
-              type: daily
-            response_variable: forecast_result
+          # No weather.get_forecasts here on purpose: the captured high is
+          # what this automation is supposed to plan the day around, and
+          # polling the forecast once a minute per instance is pure overhead.
           - variables:
               forecast_high_helper_id: !input forecast_high_helper
-              weather_entity_id: !input weather_entity
               price_sensor_id: !input price_sensor
               outdoor_sensor_id: !input outdoor_sensor
               timestamp_helper_id: !input manual_override_timestamp_helper
@@ -563,7 +559,6 @@ action:
               price_valid: "{{ states(price_sensor_id) | is_number }}"
 
               max_temp_today: "{{ states(forecast_high_helper_id) | float(0) }}"
-              max_temp_today_from_now: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float(max_temp_today) }}"
               current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
 
               price_reference_mode: !input price_reference_mode
@@ -596,10 +591,10 @@ action:
               raw_severity: >
                 {% if day_type == 'cool' %}
                   {% set span = outdoor_hot_ref - cool_day_threshold %}
-                  {{ ((max_temp_today_from_now - cool_day_threshold) / span) if span > 0 else 1 }}
+                  {{ ((max_temp_today - cool_day_threshold) / span) if span > 0 else 1 }}
                 {% elif day_type == 'heat' %}
                   {% set span = heat_day_threshold - outdoor_cold_ref %}
-                  {{ ((heat_day_threshold - max_temp_today_from_now) / span) if span > 0 else 1 }}
+                  {{ ((heat_day_threshold - max_temp_today) / span) if span > 0 else 1 }}
                 {% else %}
                   0
                 {% endif %}
