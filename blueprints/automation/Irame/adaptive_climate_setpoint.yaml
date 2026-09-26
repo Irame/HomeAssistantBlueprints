@@ -234,6 +234,38 @@ blueprint:
         setups. Adjust only if you know what you're changing.
       collapsed: true
       input:
+        cool_day_threshold:
+          name: Cooling Day Threshold
+          description: >
+            Forecasted high above which today counts as a cooling day. This is
+            an outdoor temperature, kept separate from the indoor Cooling
+            Setpoint Baseline so the two can be tuned independently. Must be
+            above the Heating Day Threshold - the gap between them is the dead
+            band where the device stays off all day.
+          default: 24
+          selector:
+            number:
+              min: 10
+              max: 35
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
+        heat_day_threshold:
+          name: Heating Day Threshold
+          description: >
+            Forecasted high below which today counts as a heating day. This is
+            an outdoor temperature, kept separate from the indoor Heating
+            Setpoint Baseline.
+          default: 21
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
         outdoor_hot_ref:
           name: Hot Day Reference
           description: Forecasted high at which cooling severity reaches maximum (1.0).
@@ -494,6 +526,8 @@ action:
               cool_setpoint_baseline: !input cool_setpoint_baseline
               heat_setpoint_baseline: !input heat_setpoint_baseline
               heat_setpoint_max: !input heat_setpoint_max
+              cool_day_threshold: !input cool_day_threshold
+              heat_day_threshold: !input heat_day_threshold
               outdoor_hot_ref: !input outdoor_hot_ref
               outdoor_cold_ref: !input outdoor_cold_ref
               price_weight: !input price_weight
@@ -533,9 +567,9 @@ action:
                 {% endif %}
 
               day_type: >
-                {% if max_temp_today > cool_setpoint_baseline %}
+                {% if max_temp_today > cool_day_threshold %}
                   cool
-                {% elif max_temp_today < heat_setpoint_baseline %}
+                {% elif max_temp_today < heat_day_threshold %}
                   heat
                 {% else %}
                   off
@@ -543,9 +577,11 @@ action:
 
               raw_severity: >
                 {% if day_type == 'cool' %}
-                  {{ ((max_temp_today_from_now - cool_setpoint_baseline) / (outdoor_hot_ref - cool_setpoint_baseline)) }}
+                  {% set span = outdoor_hot_ref - cool_day_threshold %}
+                  {{ ((max_temp_today_from_now - cool_day_threshold) / span) if span > 0 else 1 }}
                 {% elif day_type == 'heat' %}
-                  {{ ((heat_setpoint_baseline - max_temp_today_from_now) / (heat_setpoint_baseline - outdoor_cold_ref)) }}
+                  {% set span = heat_day_threshold - outdoor_cold_ref %}
+                  {{ ((heat_day_threshold - max_temp_today_from_now) / span) if span > 0 else 1 }}
                 {% else %}
                   0
                 {% endif %}
@@ -589,9 +625,9 @@ action:
 
               outdoor_override_off: >
                 {% if day_type == 'cool' %}
-                  {{ current_outdoor_temp <= cool_setpoint_baseline }}
+                  {{ current_outdoor_temp <= cool_day_threshold }}
                 {% elif day_type == 'heat' %}
-                  {{ current_outdoor_temp >= heat_setpoint_baseline }}
+                  {{ current_outdoor_temp >= heat_day_threshold }}
                 {% else %}
                   false
                 {% endif %}
