@@ -16,3 +16,10 @@ input_number:
     max: 50
     step: 0.1
     unit_of_measurement: "°C"
+
+  climate_forecast_low_today:
+    name: Captured Forecast Low (Today)
+    min: -40
+    max: 40
+    step: 0.1
+    unit_of_measurement: "°C"
