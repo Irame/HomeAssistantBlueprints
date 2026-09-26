@@ -26,7 +26,9 @@ COOLING                                HEATING
   coast   26.5 C   expensive power       coast   19.0 C   expensive power
 ```
 
-`target = comfort + p × (coast − comfort)` when `p > 0`, else `comfort + p × (comfort − charge)`, where `p` is the price signal in −1…+1. At a neutral price the target is exactly your comfort temperature. Setting **charge = comfort** disables thermal storage for that mode; setting **coast = comfort** means never trading comfort for price.
+`target = comfort + p × (coast − comfort)` when `p > 0`, else `comfort + p × (comfort − charge)`, where `p` is the price signal in −1…+1. At a neutral price the target is exactly your comfort temperature.
+
+These three numbers are the only dial price has. There is no separate influence weight, because moving an anchor toward comfort *is* how you give price less say — comfort is the fixed point of the axis, so halving the distance and halving a weight are the same operation. Setting **charge = comfort** disables thermal storage for that mode, **coast = comfort** means never trading comfort for price, and setting all three equal pins the target and ignores price entirely.
 
 #### How deep to charge
 
@@ -81,7 +83,6 @@ This needs the **Forward Outdoor Mean Storage Helper**, which a separate 15-minu
 | Cooling Day Threshold | Forecast high above which today is a cooling day (outdoor) | 24°C |
 | Heating Day Reference | Which part of the forecast heating reads: average / low / high | Average |
 | Heating Day Threshold | Heating reference below which today is a heating day (outdoor) | 16°C |
-| Electricity Price Influence | How much of the Charge…Coast range price may use | 1.0 |
 | Cheap Price Threshold | At or below this, power counts as fully cheap | 0.20 |
 | Expensive Price Threshold | At or above this, power counts as fully expensive | 0.35 |
 | Forward Average Price Sensor | Optional sensor holding the mean price of the coming hours | — |
@@ -99,7 +100,7 @@ Note: the **indoor** setpoints and the **outdoor** day thresholds are separate i
 1. **Day type** — `cool` if today's captured forecast high is above the Cooling Day Threshold; otherwise `heat` if the *heating reference* (by default the average of the captured high and low) is below the Heating Day Threshold; otherwise `off` for the whole day. Cooling is checked first, so the heating reference never affects summer.
 2. **Absolute price signal** (−1…+1) — −1 at or below the cheap threshold, +1 at or above the expensive one.
 3. **Forward price signal** (−1…+1) — only if a Forward Average Price Sensor is set: how far the current price sits below or above the mean price of the coming hours, scaled by the Forward Price Margin. Without it, only the absolute signal is used.
-4. **Combined signal** — the two are averaged, so charging requires both to agree that now is a good moment. Scaled by Electricity Price Influence.
+4. **Combined signal** — the two are averaged, so charging requires both to agree that now is a good moment.
 5. **Demand factor** (0–1) — how much heating or cooling the lookahead window will need, from the forward outdoor mean. It pulls the charge anchor toward comfort so shallow demand earns a shallow charge.
 6. **Target temperature** — slid along the Charge…Comfort…Coast axis by that signal, then snapped to each device's own temperature step and clamped to its own `min_temp`/`max_temp`.
 7. **Off overrides** — an open window, a disabled weekday, nobody home, a dead-band day, or the rooms already being past target always force the device off. Night mode and the live outdoor override also force it off, unless *Charge Outside Normal Hours* is on and the automation is genuinely charging.
