@@ -413,6 +413,20 @@ blueprint:
             entity:
               domain: input_number
 
+        forecast_low_helper:
+          name: Forecast Low Storage Helper
+          description: >
+            A second input_number helper holding today's forecast low, captured
+            at the same time as the high. Required for the "average" and "low"
+            heating references - without it the heating decision silently falls
+            back to the forecast high. Do not share this helper between
+            multiple instances of this blueprint.
+          default: []
+          selector:
+            entity:
+              domain: input_number
+              multiple: true
+
         manual_override_context_helper:
           name: Manual Override - Context Tracking Helper
           description: >
@@ -491,11 +505,25 @@ action:
             response_variable: forecast_result
           - variables:
               weather_entity_id: !input weather_entity
+              forecast_low_helper_list: !input forecast_low_helper
+              today_forecast: "{{ forecast_result[weather_entity_id]['forecast'][0] }}"
           - action: input_number.set_value
             target:
               entity_id: !input forecast_high_helper
             data:
-              value: "{{ forecast_result[weather_entity_id]['forecast'][0]['temperature'] | float }}"
+              value: "{{ today_forecast['temperature'] | float }}"
+          - if: "{{ forecast_low_helper_list | count > 0 }}"
+            then:
+              - action: input_number.set_value
+                target:
+                  entity_id: "{{ forecast_low_helper_list }}"
+                data:
+                  # Not every weather integration reports templow; falling back
+                  # to the high makes the average degrade to the old behaviour
+                  # instead of poisoning it with a zero.
+                  value: >
+                    {% set lo = today_forecast.templow if 'templow' in today_forecast else none %}
+                    {{ lo | float(today_forecast['temperature'] | float) }}
 
       - conditions: "{{ trigger.id == 'climate_changed' }}"
         sequence:
