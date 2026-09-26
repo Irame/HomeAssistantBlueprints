@@ -362,6 +362,37 @@ blueprint:
               unit_of_measurement: hours
               mode: slider
 
+        demand_cold_ref:
+          name: Full Heating Demand Below
+          description: >
+            Mean forecast outdoor temperature over the lookahead window at
+            which the coming heating demand counts as maximal, earning a full
+            charge. Demand fades to nothing as that mean approaches your
+            Heating Comfort temperature, where the building loses no heat and
+            there is nothing worth storing.
+          default: 0
+          selector:
+            number:
+              min: -25
+              max: 20
+              step: 1
+              unit_of_measurement: "°C"
+              mode: box
+
+        demand_hot_ref:
+          name: Full Cooling Demand Above
+          description: >
+            Mean forecast outdoor temperature over the lookahead window at
+            which the coming cooling demand counts as maximal.
+          default: 32
+          selector:
+            number:
+              min: 20
+              max: 45
+              step: 1
+              unit_of_measurement: "°C"
+              mode: box
+
         heat_day_threshold:
           name: Heating Day Threshold
           description: >
@@ -831,6 +862,40 @@ action:
               anchor_charge: "{{ cool_charge if day_type == 'cool' else heat_charge }}"
               anchor_coast: "{{ cool_coast if day_type == 'cool' else heat_coast }}"
 
+              # How much heating or cooling the coming hours will actually
+              # need. A cheap hour is only worth charging into if there is
+              # demand ahead to spend it on, and a cold snap under expensive
+              # power is worth charging harder for.
+              forward_outdoor_list: !input forward_outdoor_helper
+              demand_valid: >
+                {{ forward_outdoor_list | count > 0
+                   and states(forward_outdoor_list[0]) | is_number }}
+              forward_outdoor_mean: >
+                {{ states(forward_outdoor_list[0]) | float(0) if demand_valid else 0 }}
+              demand_cold_ref: !input demand_cold_ref
+              demand_hot_ref: !input demand_hot_ref
+              demand_factor: >
+                {% if not demand_valid %}
+                  1
+                {% elif day_type == 'cool' %}
+                  {% set span = (demand_hot_ref | float) - (cool_comfort | float) %}
+                  {% set raw = ((forward_outdoor_mean | float) - (cool_comfort | float)) / span if span > 0 else 1 %}
+                  {{ [[raw, 0] | max, 1] | min }}
+                {% elif day_type == 'heat' %}
+                  {% set span = (heat_comfort | float) - (demand_cold_ref | float) %}
+                  {% set raw = ((heat_comfort | float) - (forward_outdoor_mean | float)) / span if span > 0 else 1 %}
+                  {{ [[raw, 0] | max, 1] | min }}
+                {% else %}
+                  0
+                {% endif %}
+
+              # Demand only ever pulls the charge anchor back toward comfort;
+              # it never pushes past what you said you would tolerate.
+              effective_charge: >
+                {{ (anchor_comfort | float)
+                   + ((anchor_charge | float) - (anchor_comfort | float))
+                     * (demand_factor | float) }}
+
               # Slide along the axis. The same expression works for both modes:
               # cooling has charge < comfort < coast, heating has it reversed,
               # and the sign of the signal picks the correct side either way.
@@ -840,7 +905,7 @@ action:
                 {% if p > 0 %}
                   {{ c + p * ((anchor_coast | float) - c) }}
                 {% else %}
-                  {{ c + p * (c - (anchor_charge | float)) }}
+                  {{ c + p * (c - (effective_charge | float)) }}
                 {% endif %}
               # Kept at 0.5 here; the per-device step is applied later, once
               # the entity that will receive the value is known.
@@ -886,7 +951,7 @@ action:
                    and price_is_cheap
                    and (price_signal | float) < 0
                    and day_type != 'off'
-                   and (anchor_charge | float) != (anchor_comfort | float) }}
+                   and (effective_charge | float) != (anchor_comfort | float) }}
               storage_bypass: "{{ storage_overrides_schedule and storage_charging }}"
 
               should_be_off: >
