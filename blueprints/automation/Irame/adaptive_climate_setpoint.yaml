@@ -214,6 +214,38 @@ blueprint:
                 - label: Today's min/max (price sensor attributes)
                   value: daily
 
+        price_forecast_sensor:
+          name: Forward Average Price Sensor
+          description: >
+            Optional. A sensor whose state is the average price over the coming
+            hours - with the tibber_prices HACS integration that is one of the
+            "Price Next Nh" sensors, and around 6h is a reasonable match for how
+            long a building holds a charge. When set, the automation also asks
+            whether now is cheap *relative to what is coming*, which is what
+            actually makes storing energy pay. Leave empty to judge price on the
+            fixed thresholds alone.
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              multiple: true
+
+        price_lookahead_margin:
+          name: Forward Price Margin
+          description: >
+            How far the current price must sit below the forward average before
+            it counts as fully worth charging, as a fraction of that average.
+            0.15 means 15 % cheaper than the coming hours earns a full charge
+            signal, and 15 % dearer a full coast signal. Larger values make the
+            automation fussier about when it stores energy.
+          default: 0.15
+          selector:
+            number:
+              min: 0.02
+              max: 1
+              step: 0.01
+              mode: slider
+
         price_cheap:
           name: Cheap Price Threshold
           description: >
@@ -690,7 +722,36 @@ action:
 
               # One signed price signal drives everything:
               #   -1 = charge (cheap)   0 = comfort   +1 = coast (expensive)
-              price_signal_raw: "{{ (2 * (price_factor_clamped | float)) - 1 }}"
+              # The absolute half asks "is this cheap in euros", the forward
+              # half asks "is this cheap compared with the hours ahead". Storing
+              # energy only pays when both agree, so they are averaged.
+              price_signal_absolute: "{{ (2 * (price_factor_clamped | float)) - 1 }}"
+
+              price_forecast_list: !input price_forecast_sensor
+              price_lookahead_margin: !input price_lookahead_margin
+              forward_mean_price: >
+                {{ states(price_forecast_list[0]) | float(0)
+                   if price_forecast_list | count > 0 else 0 }}
+              lookahead_valid: >
+                {{ price_valid
+                   and price_forecast_list | count > 0
+                   and states(price_forecast_list[0]) | is_number
+                   and (forward_mean_price | float) > 0 }}
+              price_signal_forward: >
+                {% if lookahead_valid %}
+                  {% set fm = forward_mean_price | float %}
+                  {% set span = (price_lookahead_margin | float) * fm %}
+                  {{ [[(current_price - fm) / span, -1] | max, 1] | min if span > 0 else 0 }}
+                {% else %}
+                  0
+                {% endif %}
+
+              price_signal_raw: >
+                {% if lookahead_valid %}
+                  {{ ((price_signal_absolute | float) + (price_signal_forward | float)) / 2 }}
+                {% else %}
+                  {{ price_signal_absolute | float }}
+                {% endif %}
               price_signal: >
                 {{ [[(price_signal_raw | float) * (price_weight | float), -1] | max, 1] | min }}
 
@@ -752,6 +813,7 @@ action:
               storage_charging: >
                 {{ (price_weight | float) > 0
                    and price_is_cheap
+                   and (price_signal | float) < 0
                    and day_type != 'off'
                    and (anchor_charge | float) != (anchor_comfort | float) }}
               storage_bypass: "{{ storage_overrides_schedule and storage_charging }}"
