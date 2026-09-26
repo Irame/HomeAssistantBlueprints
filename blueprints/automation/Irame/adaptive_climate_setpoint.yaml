@@ -6,7 +6,9 @@ blueprint:
     electricity price slide the target along a Charge / Comfort / Coast axis,
     charging the building with heat or cold while power is cheap and coasting
     while it is dear. Price is judged both against fixed thresholds and,
-    optionally, against the average price of the coming hours. Shuts off at
+    optionally, against the average price of the coming hours, while how
+    deeply to charge is scaled by how much heating or cooling those hours are
+    forecast to need. Shuts off at
     night, on selected weekdays, during the dead band, or when the live outdoor
     temperature makes running pointless, and pauses itself for a configurable
     cooldown after any manual change at the device.

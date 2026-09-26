@@ -23,3 +23,10 @@ input_number:
     max: 40
     step: 0.1
     unit_of_measurement: "°C"
+
+  climate_forward_outdoor_mean:
+    name: Forecast Outdoor Mean (Next Hours)
+    min: -40
+    max: 50
+    step: 0.1
+    unit_of_measurement: "°C"
