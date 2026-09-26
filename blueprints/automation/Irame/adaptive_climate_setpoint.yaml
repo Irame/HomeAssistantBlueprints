@@ -198,25 +198,6 @@ blueprint:
               step: 0.1
               mode: slider
 
-        price_reference_mode:
-          name: Price Reference
-          description: >
-            How "cheap" and "expensive" are determined. "Fixed thresholds"
-            uses the two absolute prices below, so a day that is expensive
-            from morning to night stays expensive. "Today's min/max" scales
-            against the cheapest and most expensive hour of the current day,
-            which always reports some hour as cheap even when every hour is
-            costly.
-          default: fixed
-          selector:
-            select:
-              mode: list
-              options:
-                - label: Fixed thresholds
-                  value: fixed
-                - label: Today's min/max (price sensor attributes)
-                  value: daily
-
         price_forecast_sensor:
           name: Forward Average Price Sensor
           description: >
@@ -488,8 +469,9 @@ blueprint:
         price_sensor:
           name: Electricity Price Sensor
           description: >
-            Your Tibber (or similar) current-price sensor. Must expose min_price
-            and max_price attributes for today.
+            Your Tibber (or similar) current-price sensor. Its state must be
+            the current price as a plain number, in the same unit as the cheap
+            and expensive thresholds.
           selector:
             entity:
               domain: sensor
@@ -787,23 +769,10 @@ action:
                   {{ (max_temp_today + min_temp_today) / 2 }}
                 {% endif %}
 
-              price_reference_mode: !input price_reference_mode
               price_cheap: !input price_cheap
               price_expensive: !input price_expensive
 
               current_price: "{{ states(price_sensor_id) | float(0) }}"
-              price_low_ref: >
-                {% if price_reference_mode == 'fixed' %}
-                  {{ price_cheap }}
-                {% else %}
-                  {{ state_attr(price_sensor_id, 'min_price') | float(0) }}
-                {% endif %}
-              price_high_ref: >
-                {% if price_reference_mode == 'fixed' %}
-                  {{ price_expensive }}
-                {% else %}
-                  {{ state_attr(price_sensor_id, 'max_price') | float(1) }}
-                {% endif %}
 
               day_type: >
                 {% if max_temp_today > cool_day_threshold %}
@@ -815,8 +784,8 @@ action:
                 {% endif %}
 
               price_factor: >
-                {% set lo = price_low_ref | float(0) %}
-                {% set hi = price_high_ref | float(0) %}
+                {% set lo = price_cheap | float(0) %}
+                {% set hi = price_expensive | float(0) %}
                 {% if not price_valid %}
                   1
                 {% else %}
