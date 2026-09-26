@@ -252,13 +252,39 @@ blueprint:
               unit_of_measurement: "°C"
               mode: box
 
+        heating_reference:
+          name: Heating Day Reference
+          description: >
+            Which part of today's forecast the heating decision reads. Heating
+            load tracks the whole day rather than its warmest moment, so the
+            average of the forecast high and low - the usual heating-degree-day
+            measure - is the sensible choice. Heating Day Threshold and Cold Day
+            Reference are both interpreted in terms of whatever you pick here,
+            so switching this means re-tuning both. Cooling is always classified
+            on the forecast high and is checked first, so this never affects
+            summer. "Average" and "Low" need the Forecast Low Storage Helper;
+            without it they fall back to the forecast high.
+          default: average
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Average of forecast high and low
+                  value: average
+                - label: Forecast low
+                  value: low
+                - label: Forecast high
+                  value: high
+
         heat_day_threshold:
           name: Heating Day Threshold
           description: >
-            Forecasted high below which today counts as a heating day. This is
-            an outdoor temperature, kept separate from the indoor Heating
-            Setpoint Baseline.
-          default: 21
+            Heating reference temperature below which today counts as a heating
+            day. This is an outdoor temperature, kept separate from the indoor
+            Heating Setpoint Baseline. The default suits the "average"
+            reference; with "Forecast high" it needs to be several degrees
+            higher.
+          default: 16
           selector:
             number:
               min: 0
@@ -281,8 +307,10 @@ blueprint:
 
         outdoor_cold_ref:
           name: Cold Day Reference
-          description: Forecasted high at which heating severity reaches maximum (1.0).
-          default: 5
+          description: >
+            Heating reference temperature at which heating severity reaches
+            maximum (1.0). The default suits the "average" reference.
+          default: 0
           selector:
             number:
               min: -20
@@ -294,8 +322,8 @@ blueprint:
         forecast_capture_time:
           name: Forecast Capture Time
           description: >
-            Time of day to read and freeze the forecasted high. Pick an early
-            time, before today's peak temperature typically occurs.
+            Time of day to read and freeze today's forecast high and low. Pick
+            an early time, before today's peak temperature typically occurs.
           default: "05:00:00"
           selector:
             time: {}
@@ -590,6 +618,28 @@ action:
               max_temp_today: "{{ states(forecast_high_helper_id) | float(0) }}"
               current_outdoor_temp: "{{ states(outdoor_sensor_id) | float(0) }}"
 
+              forecast_low_helper_list: !input forecast_low_helper
+              low_valid: >
+                {{ forecast_low_helper_list | count > 0
+                   and states(forecast_low_helper_list[0]) | is_number }}
+              min_temp_today: >
+                {{ states(forecast_low_helper_list[0]) | float(max_temp_today)
+                   if low_valid else max_temp_today }}
+
+              # Cooling is classified on the forecast high; heating gets its own
+              # reference because heating load follows the whole day, not its
+              # warmest moment.
+              heating_reference: !input heating_reference
+              heating_reference_degraded: "{{ heating_reference != 'high' and not low_valid }}"
+              heat_reference_temp: >
+                {% if not low_valid or heating_reference == 'high' %}
+                  {{ max_temp_today }}
+                {% elif heating_reference == 'low' %}
+                  {{ min_temp_today }}
+                {% else %}
+                  {{ (max_temp_today + min_temp_today) / 2 }}
+                {% endif %}
+
               price_reference_mode: !input price_reference_mode
               price_cheap: !input price_cheap
               price_expensive: !input price_expensive
@@ -611,7 +661,7 @@ action:
               day_type: >
                 {% if max_temp_today > cool_day_threshold %}
                   cool
-                {% elif max_temp_today < heat_day_threshold %}
+                {% elif (heat_reference_temp | float) < heat_day_threshold %}
                   heat
                 {% else %}
                   off
@@ -623,7 +673,7 @@ action:
                   {{ ((max_temp_today - cool_day_threshold) / span) if span > 0 else 1 }}
                 {% elif day_type == 'heat' %}
                   {% set span = heat_day_threshold - outdoor_cold_ref %}
-                  {{ ((heat_day_threshold - max_temp_today) / span) if span > 0 else 1 }}
+                  {{ ((heat_day_threshold - (heat_reference_temp | float)) / span) if span > 0 else 1 }}
                 {% else %}
                   0
                 {% endif %}
