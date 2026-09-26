@@ -450,6 +450,9 @@ trigger:
   - id: capture_forecast
     platform: time
     at: !input forecast_capture_time
+  - id: capture_forecast_if_stale
+    platform: homeassistant
+    event: start
   - id: climate_changed
     platform: state
     entity_id: !input climate_entities
@@ -466,8 +469,19 @@ condition: []
 
 action:
   - choose:
-      - conditions: "{{ trigger.id == 'capture_forecast' }}"
+      - conditions: "{{ trigger.id in ['capture_forecast', 'capture_forecast_if_stale'] }}"
         sequence:
+          - variables:
+              capture_helper_id: !input forecast_high_helper
+              helper_is_stale: >
+                {% set s = states[capture_helper_id] %}
+                {{ s is none
+                   or not (s.state | is_number)
+                   or as_local(s.last_changed).date() != now().date() }}
+          # On restart, only re-read the forecast if today's high was never
+          # captured - otherwise a late-day restart would overwrite the
+          # morning peak with whatever is left of the day.
+          - condition: "{{ trigger.id == 'capture_forecast' or helper_is_stale }}"
           - action: weather.get_forecasts
             target:
               entity_id: !input weather_entity
