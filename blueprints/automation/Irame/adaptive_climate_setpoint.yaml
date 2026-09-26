@@ -346,6 +346,22 @@ blueprint:
                 - label: Forecast high
                   value: high
 
+        demand_lookahead_hours:
+          name: Demand Lookahead
+          description: >
+            How many hours of the hourly forecast are averaged to judge how
+            much heating or cooling is coming. Best kept close to the window of
+            your Forward Average Price Sensor, and to how long the building
+            actually holds a charge.
+          default: 6
+          selector:
+            number:
+              min: 1
+              max: 24
+              step: 1
+              unit_of_measurement: hours
+              mode: slider
+
         heat_day_threshold:
           name: Heating Day Threshold
           description: >
@@ -499,6 +515,21 @@ blueprint:
               domain: input_number
               multiple: true
 
+        forward_outdoor_helper:
+          name: Forward Outdoor Mean Storage Helper
+          description: >
+            Optional. An input_number holding the mean outdoor temperature of
+            the coming hours, refreshed every 15 minutes from the hourly
+            forecast. This is what lets the automation charge harder when a
+            cold or hot spell is approaching and skip charging when the hours
+            ahead need little energy. Without it the charge depth is not scaled
+            by demand. Do not share this helper between multiple instances.
+          default: []
+          selector:
+            entity:
+              domain: input_number
+              multiple: true
+
         manual_override_context_helper:
           name: Manual Override - Context Tracking Helper
           description: >
@@ -540,6 +571,14 @@ trigger:
   - id: capture_forecast_if_stale
     platform: homeassistant
     event: start
+  # The hourly forecast moves slowly, so this is deliberately far coarser
+  # than the refresh loop - it is a service call, not a template.
+  - id: capture_demand
+    platform: time_pattern
+    minutes: "/15"
+  - id: capture_demand
+    platform: homeassistant
+    event: start
   - id: climate_changed
     platform: state
     entity_id: !input climate_entities
@@ -556,6 +595,37 @@ condition: []
 
 action:
   - choose:
+      - conditions: "{{ trigger.id == 'capture_demand' }}"
+        sequence:
+          - variables:
+              demand_helper_list: !input forward_outdoor_helper
+          - condition: "{{ demand_helper_list | count > 0 }}"
+          - action: weather.get_forecasts
+            target:
+              entity_id: !input weather_entity
+            data:
+              type: hourly
+            response_variable: hourly_result
+          - variables:
+              demand_weather_id: !input weather_entity
+              demand_lookahead_hours: !input demand_lookahead_hours
+              hourly_slots: >
+                {{ hourly_result[demand_weather_id]['forecast'][:demand_lookahead_hours | int] }}
+              forward_outdoor_mean: >
+                {% set ns = namespace(t=[]) %}
+                {% for s in hourly_slots %}
+                  {% if 'temperature' in s and s.temperature is not none %}
+                    {% set ns.t = ns.t + [s.temperature | float(0)] %}
+                  {% endif %}
+                {% endfor %}
+                {{ (ns.t | sum / ns.t | count) if ns.t | count > 0 else '' }}
+          - condition: "{{ forward_outdoor_mean | is_number }}"
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ demand_helper_list }}"
+            data:
+              value: "{{ forward_outdoor_mean | float }}"
+
       - conditions: "{{ trigger.id in ['capture_forecast', 'capture_forecast_if_stale'] }}"
         sequence:
           - variables:
