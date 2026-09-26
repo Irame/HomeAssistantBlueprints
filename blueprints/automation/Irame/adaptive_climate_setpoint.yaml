@@ -1,14 +1,15 @@
 blueprint:
   name: Adaptive Climate Setpoint (Forecast + Tibber Price)
   description: >
-    Chooses heating, cooling, or off by comparing today's forecast against
-    separate cooling and heating day thresholds - cooling on the day's high,
-    heating on its average - scales the target temperature
-    by severity and electricity price, pushes the setpoint past its normal
-    limit to charge the building with heat or cold while power is cheap, shuts
-    off at night, on selected weekdays, during the dead band, or when the live
-    outdoor temperature makes running pointless, and pauses itself for a
-    configurable cooldown after any manual change at the device.
+    Uses today's forecast only to decide whether to heat, cool, or stay off -
+    cooling on the day's high, heating on its average - and then lets the
+    electricity price slide the target along a Charge / Comfort / Coast axis,
+    charging the building with heat or cold while power is cheap and coasting
+    while it is dear. Price is judged both against fixed thresholds and,
+    optionally, against the average price of the coming hours. Shuts off at
+    night, on selected weekdays, during the dead band, or when the live outdoor
+    temperature makes running pointless, and pauses itself for a configurable
+    cooldown after any manual change at the device.
   domain: automation
   source_url: https://github.com/Irame/HomeAssistantBlueprints/blob/master/blueprints/automation/Irame/adaptive_climate_setpoint.yaml
   input:
@@ -309,7 +310,7 @@ blueprint:
           description: >
             Forecasted high above which today counts as a cooling day. This is
             an outdoor temperature, kept separate from the indoor Cooling
-            Setpoint Baseline so the two can be tuned independently. Must be
+            Comfort setpoint so the two can be tuned independently. Must be
             above the Heating Day Threshold - the gap between them is the dead
             band where the device stays off all day.
           default: 24
@@ -327,12 +328,12 @@ blueprint:
             Which part of today's forecast the heating decision reads. Heating
             load tracks the whole day rather than its warmest moment, so the
             average of the forecast high and low - the usual heating-degree-day
-            measure - is the sensible choice. Heating Day Threshold and Cold Day
-            Reference are both interpreted in terms of whatever you pick here,
-            so switching this means re-tuning both. Cooling is always classified
-            on the forecast high and is checked first, so this never affects
-            summer. "Average" and "Low" need the Forecast Low Storage Helper;
-            without it they fall back to the forecast high.
+            measure - is the sensible choice. Heating Day Threshold is
+            interpreted in terms of whatever you pick here, so switching this
+            means re-tuning it. Cooling is always classified on the forecast
+            high and is checked first, so this never affects summer. "Average"
+            and "Low" need the Forecast Low Storage Helper; without it they
+            fall back to the forecast high.
           default: average
           selector:
             select:
@@ -350,7 +351,7 @@ blueprint:
           description: >
             Heating reference temperature below which today counts as a heating
             day. This is an outdoor temperature, kept separate from the indoor
-            Heating Setpoint Baseline. The default suits the "average"
+            Heating Comfort setpoint. The default suits the "average"
             reference; with "Forecast high" it needs to be several degrees
             higher.
           default: 16
