@@ -922,13 +922,13 @@ action:
               # about the room's target, not about how the day was classified.
               outdoor_override_off: >
                 {% if not outdoor_valid %}
-                  false
+                  {{ false }}
                 {% elif day_type == 'cool' %}
                   {{ current_outdoor_temp <= (cool_comfort | float) }}
                 {% elif day_type == 'heat' %}
                   {{ current_outdoor_temp >= (heat_comfort | float) }}
                 {% else %}
-                  false
+                  {{ false }}
                 {% endif %}
 
               window_open: >
@@ -969,7 +969,7 @@ action:
               # until the room has drifted all the way back to it.
               indoor_satisfied: >
                 {% if not indoor_valid %}
-                  false
+                  {{ false }}
                 {% else %}
                   {% set t = target_temp | float %}
                   {% set i = indoor_temp | float %}
@@ -980,7 +980,7 @@ action:
                   {% elif day_type == 'heat' %}
                     {{ (i > t) if idle else (i >= t + db) }}
                   {% else %}
-                    false
+                    {{ false }}
                   {% endif %}
                 {% endif %}
 
