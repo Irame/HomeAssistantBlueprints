@@ -3,11 +3,12 @@ input_text:
     name: Climate Manual Override — Last Automation Context
     max: 255
 
-input_datetime:
-  climate_manual_override_timestamp:
+timer:
+  climate_manual_override_timer:
     name: Climate Manual Override — Last Detected Manual Change
-    has_date: true
-    has_time: true
+    duration: "00:30:00"
+    restore: true
+
 
 input_number:
   climate_forecast_high_today:

@@ -389,21 +389,6 @@ blueprint:
           selector:
             time: {}
 
-        manual_override_duration_minutes:
-          name: Manual Override Cooldown (minutes)
-          description: >
-            How long the automation pauses itself after detecting a manual
-            change to hvac_mode or target temperature at the device. Set to 0
-            to disable this guard entirely.
-          default: 60
-          selector:
-            number:
-              min: 0
-              max: 720
-              step: 5
-              unit_of_measurement: minutes
-              mode: box
-
         indoor_deadband:
           name: Indoor Deadband
           description: >
@@ -579,15 +564,15 @@ blueprint:
             entity:
               domain: input_text
 
-        manual_override_timestamp_helper:
-          name: Manual Override - Last Manual Change Helper
+        manual_override_timer_helper:
+          name: Manual Override - Manual Change Timer Helper
           description: >
-            An input_datetime helper (date + time) used to store when a manual
-            change was last detected. Do not share this helper between
-            multiple instances of this blueprint.
+            An timer helper that gets triggered when a manual
+            change is detected and blocks further automation actions.
+            Do not share this helper between multiple instances of this blueprint.
           selector:
             entity:
-              domain: input_datetime
+              domain: timer
 
 mode: queued
 max: 10
@@ -601,6 +586,10 @@ trigger:
   - id: refresh
     platform: state
     entity_id: !input presence_entities
+    to: null # ignore attribute changes
+  - id: refresh
+    platform: state
+    entity_id: !input manual_override_timer_helper
     to: null # ignore attribute changes
   - id: capture_forecast
     platform: time
@@ -718,11 +707,9 @@ action:
           - choose:
               - conditions: "{{ not is_side_effect_temp_change and not is_self_caused }}"
                 sequence:
-                  - action: input_datetime.set_datetime
+                  - action: timer.start
                     target:
-                      entity_id: !input manual_override_timestamp_helper
-                    data:
-                      timestamp: "{{ now().timestamp() }}"
+                      entity_id: !input manual_override_timer_helper
 
       - conditions: "{{ trigger.id == 'refresh' }}"
         sequence:
@@ -733,8 +720,7 @@ action:
               forecast_high_helper_id: !input forecast_high_helper
               price_sensor_id: !input price_sensor
               outdoor_sensor_id: !input outdoor_sensor
-              timestamp_helper_id: !input manual_override_timestamp_helper
-              override_duration_minutes: !input manual_override_duration_minutes
+              timer_helper_id: !input manual_override_timer_helper
               climate_entities_list: !input climate_entities
               door_window_entities: !input door_window_sensors
               min_running_minutes: !input min_running_minutes
@@ -757,9 +743,7 @@ action:
                 {{ presence_entities | length > 0
                    and (expand(presence_entities) | selectattr('state', 'eq', 'home') | list | count) == 0 }}
 
-              manual_override_active: >
-                {{ (as_timestamp(now()) - as_timestamp(states(timestamp_helper_id), 0))
-                   < (override_duration_minutes * 60) }}
+              manual_override_active: "{{ states(timer_helper_id) == 'active' }}"
 
               forecast_valid: "{{ states(forecast_high_helper_id) | is_number }}"
               outdoor_valid: "{{ states(outdoor_sensor_id) | is_number }}"
@@ -1056,11 +1040,9 @@ action:
           - choose:
               - conditions: "{{ window_open }}"
                 sequence:
-                  - action: input_datetime.set_datetime
+                  - action: timer.cancel
                     target:
-                      entity_id: !input manual_override_timestamp_helper
-                    data:
-                      timestamp: 0
+                      entity_id: !input manual_override_timer_helper
 
           - if: "{{ execute_now and needs_change }}"
             then:
