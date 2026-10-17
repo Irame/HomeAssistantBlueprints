@@ -1056,21 +1056,25 @@ action:
                   sequence:
                     - variables:
                         entity: "{{ repeat.item }}"
-                        entity_target: "{{ entity_targets[repeat.item] }}"
-                    - if: "{{ not is_state(entity, desired_mode) }}"
-                      then:
-                        - action: climate.set_hvac_mode
-                          target:
-                            entity_id: "{{ entity }}"
-                          data:
-                            hvac_mode: "{{ desired_mode }}"
-                    - if: >
-                        {{ desired_mode != 'off'
-                           and (state_attr(entity, 'temperature') | float(-999)
-                                - (entity_target | float)) | abs > 0.05 }}
-                      then:
-                        - action: climate.set_temperature
-                          target:
-                            entity_id: "{{ entity }}"
-                          data:
-                            temperature: "{{ entity_target | float }}"
+                        entity_target: "{{ entity_targets[repeat.item] | float }}"
+                        mode_differs: "{{ not is_state(entity, desired_mode) }}"
+                        temp_differs: >
+                          {{ desired_mode != "off"
+                            and (state_attr(entity, "temperature") | float(-999)
+                                  - entity_target) | abs > 0.05 }}
+                    - choose:
+                        - conditions: "{{ temp_differs }}"
+                          sequence:
+                            - action: climate.set_temperature
+                              target:
+                                entity_id: "{{ entity }}"
+                              data:
+                                temperature: "{{ entity_target }}"
+                                hvac_mode: "{{ desired_mode }}"
+                        - conditions: "{{ mode_differs }}"
+                          sequence:
+                            - action: climate.set_hvac_mode
+                              target:
+                                entity_id: "{{ entity }}"
+                              data:
+                                hvac_mode: "{{ desired_mode }}"
