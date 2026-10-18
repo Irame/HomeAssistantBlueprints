@@ -435,6 +435,26 @@ blueprint:
               unit_of_measurement: minutes
               mode: box
 
+        self_change_grace_seconds:
+          name: Self-Change Grace Period (seconds)
+          description: >
+            After this automation sends a command, any change the device
+            reports within this window is treated as the device catching up,
+            never as a manual change. Covers slow devices that report back
+            in several steps (mode first, setpoint later). Changes that land
+            exactly on the last commanded mode and setpoint are recognised as
+            this automation's own at any time; this window only matters for
+            in-between states. Raise it if slow devices still trip the manual
+            override.
+          default: 15
+          selector:
+            number:
+              min: 0
+              max: 600
+              step: 5
+              unit_of_measurement: seconds
+              mode: box
+
     devices_and_sensors:
       name: Devices & Sensors
       icon: mdi:devices
@@ -556,8 +576,10 @@ blueprint:
           name: Manual Override - Context Tracking Helper
           description: >
             An input_text helper (max length 255) used internally to remember
-            this automation's own last context ID, so it can tell its own
-            temperature/mode changes apart from a manual change at the device.
+            this automation's last command - its context ID, when it was sent,
+            and the mode and setpoint it asked for - so it can tell its own
+            temperature/mode changes apart from a manual change at the device,
+            even when a slow device reports back late.
             Do not share this helper between multiple instances of this
             blueprint.
           selector:
@@ -701,9 +723,35 @@ action:
               is_side_effect_temp_change: >
                 {{ trigger.to_state.state in ['fan_only', 'dry', 'off']
                     and trigger.attribute == 'temperature' }}
+              self_change_grace_seconds: !input self_change_grace_seconds
+              # The helper holds "context_id;timestamp;mode;setpoint" of the
+              # last command. A change counts as this automation's own if:
+              #   - it carries our context (fast devices, the normal case), or
+              #   - it arrives within the grace period after a command
+              #     (devices reporting back in steps), or
+              #   - it settles on exactly what we last commanded (slow
+              #     devices whose report arrives after Home Assistant has
+              #     stopped stamping our context onto the entity).
+              # A bare context ID left over from older versions still works.
               is_self_caused: >
-                {{ context_comp is not none
-                    and context_comp == states(context_helper_id) }}
+                {% set last = states(context_helper_id).split(';') %}
+                {% set ctx_match = context_comp is not none
+                                   and context_comp == last[0] %}
+                {% if last | count < 4 %}
+                  {{ ctx_match }}
+                {% else %}
+                  {% set s = trigger.to_state %}
+                  {% set step = state_attr(trigger.entity_id, 'target_temp_step') | float(0.5) %}
+                  {% set step = step if step > 0 else 0.5 %}
+                  {% set age = now().timestamp() - (last[1] | float(0)) %}
+                  {% set matches_command = s.state == last[2]
+                       and (last[2] == 'off'
+                            or (s.attributes.get('temperature') | float(-999)
+                                - last[3] | float(0)) | abs <= step) %}
+                  {{ ctx_match
+                     or age < (self_change_grace_seconds | float(0))
+                     or matches_command }}
+                {% endif %}
           - choose:
               - conditions: "{{ not is_side_effect_temp_change and not is_self_caused }}"
                 sequence:
@@ -1050,7 +1098,12 @@ action:
                 target:
                   entity_id: !input manual_override_context_helper
                 data:
-                  value: "{{ context.id }}"
+                  # Who, when, and what - so a late report from a slow device
+                  # can still be matched to this command after its context
+                  # has expired. Plain ';' separators rather than JSON, since
+                  # HA would parse a JSON-looking template result into a dict.
+                  value: >-
+                    {{ context.id }};{{ now().timestamp() | int }};{{ desired_mode }};{{ target_temp }}
               - repeat:
                   for_each: "{{ climate_entities_list }}"
                   sequence:
