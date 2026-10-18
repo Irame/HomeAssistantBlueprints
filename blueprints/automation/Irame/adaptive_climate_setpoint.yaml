@@ -741,13 +741,12 @@ action:
                   {{ ctx_match }}
                 {% else %}
                   {% set s = trigger.to_state %}
-                  {% set step = state_attr(trigger.entity_id, 'target_temp_step') | float(0.5) %}
-                  {% set step = step if step > 0 else 0.5 %}
+                  {% set eps = 0.01 %}
                   {% set age = now().timestamp() - (last[1] | float(0)) %}
                   {% set matches_command = s.state == last[2]
                        and (last[2] == 'off'
                             or (s.attributes.get('temperature') | float(-999)
-                                - last[3] | float(0)) | abs <= step) %}
+                                - last[3] | float(0)) | abs <= eps) %}
                   {{ ctx_match
                      or age < (self_change_grace_seconds | float(0))
                      or matches_command }}
