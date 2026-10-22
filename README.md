@@ -191,6 +191,18 @@ Without the hold, the house is heated from 19 to 23.5 C while the price slides f
 3. Go to **Settings → Automations & Scenes → Create Automation → Use Blueprint**, select **Adaptive Climate Setpoint (Forecast + Tibber Price)**, and fill in your entities and setpoints.
 4. Create one automation instance per climate device (or group of devices) if they need independent setpoints, sensors, or schedules.
 
+## Trying parameters on a real day
+
+[`tools/adaptive_climate_setpoint_simulator.html`](tools/adaptive_climate_setpoint_simulator.html) replays one day through the blueprint's logic and charts the target temperature against the electricity price and the outdoor temperature, next to a baseline, so you can see what a change does before you make it. Download the file and open it in a browser; it needs nothing else.
+
+1. In Home Assistant open **History** and add your price sensor, your outdoor temperature sensor and, optionally, a room temperature sensor. Pick the day you want plus the following morning, because the price windows look ahead.
+2. Open the **⋮** menu and choose **Download data**.
+3. Load the CSV in the simulator, check which sensor it assigned to which role, and pick the day.
+
+Until you load your own data it shows made-up example days. The grey lines are the baseline: by default the same settings with the falling-price hold switched off, or any settings you pin. The tiles estimate cost, energy, average price paid and the room temperature range from a simple room model, which you can calibrate against a measured room temperature. **Blueprint inputs** turns the current settings into YAML for the automation.
+
+It simulates the price signals, the falling-price hold, the demand factor, the target, night mode, the live outdoor override, the indoor gating and the timing guards. The forward and near-term price averages are computed from the price curve the way tibber_prices builds its `⌀ Price Next Nh` sensors, and the day's forecast and the hourly forecast are taken from the measured outdoor temperature. Windows, presence, disabled weekdays and manual overrides are not simulated. The simulator mirrors the blueprint's templates by hand, so a change to the decision logic belongs in both.
+
 ## Testing before relying on it
 
 Before letting it run unattended:

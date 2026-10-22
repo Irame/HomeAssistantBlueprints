@@ -1,0 +1,1331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Climate Setpoint Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Replay one day of electricity prices and outdoor temperatures through the Adaptive Climate Setpoint blueprint and compare parameter sets.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a tuning bench - parameter rail on the left, three stacked time-of-day charts on one shared clock on the right. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #fcfcfd;
+  --ink: #10161d;
+  --ink-2: #4b5560;
+  --muted: #7b8591;
+  --line: #e1e5ea;
+  --axis: #c3c9d0;
+  --wash: #e9eef4;
+  --accent: #1f66bd;
+  --accent-ink: #ffffff;
+  --good: #006300;
+  --bad: #c23434;
+  --s-target: #2a78d6;
+  --s-room: #eb6834;
+  --s-outdoor: #1baf7a;
+  --s-price: #6250d6;
+  --s-near: #eda100;
+  --s-forward: #52514e;
+  --s-base: #898781;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1215; --surface: #181b1f; --ink: #eef1f4; --ink-2: #b8c0c9; --muted: #8a929b;
+    --line: #2a2e34; --axis: #3b4047; --wash: #20252b; --accent: #4a8fe0; --accent-ink: #0b0f14;
+    --good: #0ca30c; --bad: #e66767;
+    --s-target: #3987e5; --s-room: #d95926; --s-outdoor: #199e70; --s-price: #9085e9;
+    --s-near: #c98500; --s-forward: #c3c2b7; --s-base: #898781;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1215; --surface: #181b1f; --ink: #eef1f4; --ink-2: #b8c0c9; --muted: #8a929b;
+  --line: #2a2e34; --axis: #3b4047; --wash: #20252b; --accent: #4a8fe0; --accent-ink: #0b0f14;
+  --good: #0ca30c; --bad: #e66767;
+  --s-target: #3987e5; --s-room: #d95926; --s-outdoor: #199e70; --s-price: #9085e9;
+  --s-near: #c98500; --s-forward: #c3c2b7; --s-base: #898781;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.45 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 15px; font-weight: 600; }
+.lede { color: var(--ink-2); max-width: 68ch; margin: 4px 0 0; }
+.masthead { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; max-width: 1400px; margin: 0 auto 18px; }
+.masthead .tag { font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+.bench { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 18px; max-width: 1400px; margin: 0 auto; align-items: start; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); } .rail { order: 2; } .stage { order: 1; } }
+
+/* parameter rail */
+.rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.group > summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 600 14px/1.2 var(--f-display); }
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); margin-top: -3px; transition: transform .15s; }
+.group[open] > summary::after { transform: rotate(-135deg); margin-top: 3px; }
+.group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r); }
+.group .body { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.hint { color: var(--muted); font-size: 12px; margin: 0; }
+.hint code, .note code { font-family: var(--f-mono); font-size: 11.5px; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
+.field > label, .field > .lbl { font-size: 13px; color: var(--ink); }
+.field.stack { grid-template-columns: minmax(0, 1fr); }
+.field.stack select { width: 100%; font-family: var(--f-body); }
+.field .sub { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); margin-top: -2px; }
+.field.off > label, .field.off .num { opacity: .45; }
+.num { display: inline-flex; align-items: center; gap: 4px; }
+.num input { width: 76px; }
+.unit { font: 12px var(--f-mono); color: var(--muted); min-width: 34px; }
+input[type="number"], input[type="time"], select, textarea {
+  font: 13px var(--f-mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--axis); border-radius: 4px; padding: 4px 6px;
+}
+textarea { width: 100%; min-height: 90px; resize: vertical; font-size: 12px; }
+select { max-width: 100%; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.slider { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 56px; gap: 8px; align-items: center; }
+.slider output { font: 12px var(--f-mono); text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.axis-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 10px; align-items: center; }
+.axis-grid .h { font: 500 11px var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.axis-grid input { width: 100%; min-width: 0; }
+.sep { height: 1px; background: var(--line); margin: 2px 0; }
+.toggle { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.btn { font: 500 13px var(--f-body); border-radius: 4px; padding: 6px 10px; cursor: pointer; border: 1px solid var(--axis); background: var(--surface); color: var(--ink); }
+.btn:hover { background: var(--wash); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.notice { font-size: 12px; color: var(--ink-2); background: var(--wash); border-radius: 4px; padding: 6px 8px; margin: 0; }
+.notice.err { color: var(--bad); }
+
+/* stage */
+.stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; position: relative; }
+.compare { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+.compare .what { font-size: 13px; color: var(--ink-2); }
+.compare .what b { color: var(--ink); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--ink-2); }
+.tile .v { font: 600 24px/1.15 var(--f-body); letter-spacing: -0.01em; }
+.tile .v small { font: 500 13px var(--f-body); color: var(--ink-2); margin-left: 3px; }
+.tile .d { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .d .up, .tile .d .down { font-weight: 600; }
+.d .better { color: var(--good); } .d .worse { color: var(--bad); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px 6px; position: relative; min-width: 0; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; margin-bottom: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid currentColor; }
+.legend i.thin { border-top-width: 1.5px; }
+.legend i.box { height: 10px; width: 12px; border: 0; border-radius: 2px; background: currentColor; }
+.legend i.box.fade { opacity: .3; }
+.legend i.fade { opacity: .5; }
+svg.chart { display: block; width: 100%; overflow: visible; touch-action: pan-y; }
+svg.chart text { font: 11px var(--f-mono); fill: var(--muted); }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .base { stroke: var(--axis); stroke-width: 1; }
+svg.chart .ref { stroke: var(--axis); stroke-width: 1; }
+svg.chart .night { fill: var(--wash); }
+svg.chart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg.chart .ln.thin { stroke-width: 1.5; }
+svg.chart .cross { stroke: var(--ink-2); stroke-width: 1; }
+svg.chart .dot { stroke: var(--surface); stroke-width: 2; }
+svg.chart .strip-lbl { font: 10px var(--f-mono); fill: var(--muted); }
+.c-target { stroke: var(--s-target); color: var(--s-target); fill: var(--s-target); }
+.c-room { stroke: var(--s-room); color: var(--s-room); fill: var(--s-room); }
+.c-outdoor { stroke: var(--s-outdoor); color: var(--s-outdoor); fill: var(--s-outdoor); }
+.c-price { stroke: var(--s-price); color: var(--s-price); fill: var(--s-price); }
+.c-near { stroke: var(--s-near); color: var(--s-near); fill: var(--s-near); }
+.c-forward { stroke: var(--s-forward); color: var(--s-forward); fill: var(--s-forward); }
+.c-base { stroke: var(--s-base); color: var(--s-base); fill: var(--s-base); }
+svg .ln.c-target, svg .ln.c-room, svg .ln.c-outdoor, svg .ln.c-price, svg .ln.c-near, svg .ln.c-forward, svg .ln.c-base { fill: none; }
+svg .measured { opacity: .5; }
+svg .area { stroke: none; opacity: .12; }
+svg .hold { fill: var(--s-price); }
+
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--axis); border-radius: var(--r); padding: 8px 10px; font-size: 12px; min-width: 210px; max-width: 280px; box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+.tip .t { font: 600 13px var(--f-mono); margin-bottom: 4px; }
+.tip .r { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; align-items: center; line-height: 1.5; }
+.tip .r i { width: 12px; height: 0; border-top: 2px solid currentColor; }
+.tip .r .l { color: var(--muted); }
+.tip .r b { font: 500 12px var(--f-mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.tip .why { color: var(--ink-2); margin-top: 4px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.panel > summary { cursor: pointer; padding: 10px 12px; font: 600 14px var(--f-display); }
+.panel .body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+pre.yaml { margin: 0; font: 12px/1.5 var(--f-mono); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 10px; overflow-x: auto; user-select: all; }
+.tablewrap { overflow-x: auto; max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; font: 12px var(--f-mono); font-variant-numeric: tabular-nums; width: 100%; }
+th, td { padding: 4px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th { position: sticky; top: 0; background: var(--surface); color: var(--ink-2); font-weight: 500; }
+td:first-child, th:first-child { text-align: left; }
+.note { color: var(--muted); font-size: 12px; max-width: 80ch; margin: 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div>
+    <div class="tag">Adaptive Climate Setpoint · day simulator</div>
+    <h1>Climate Setpoint Simulator</h1>
+    <p class="lede">Replay one day of electricity prices and outdoor temperatures through the blueprint's logic, then move the parameters and watch where the target temperature, the room and the power draw go.</p>
+  </div>
+</header>
+
+<main class="bench">
+  <aside class="rail" id="rail">
+    <details class="group" open id="g-data">
+      <summary>Day</summary>
+      <div class="body">
+        <div class="field stack">
+          <label for="source">Data</label>
+          <select id="source"></select>
+        </div>
+        <div class="field" id="dayfield">
+          <label for="day">Day</label>
+          <select id="day"></select>
+        </div>
+        <p class="notice" id="datainfo"></p>
+        <div class="row">
+          <label class="btn" for="file">Load Home Assistant history…</label>
+          <input type="file" id="file" accept=".csv,.json,.txt,text/csv,application/json" hidden>
+        </div>
+        <p class="hint">In Home Assistant open <b>History</b>, add the price sensor, the outdoor sensor and optionally a room sensor, pick the day plus the following morning, then <b>⋮ → Download data</b>. CSV and the REST <code>/api/history</code> JSON both work.</p>
+        <details>
+          <summary class="hint" style="cursor:pointer">Paste data instead</summary>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            <textarea id="paste" placeholder="entity_id,state,last_changed&#10;sensor.price,0.284,2026-10-21T00:00:00.000Z&#10;…"></textarea>
+            <div class="row"><button class="btn" id="usepaste" type="button">Use pasted data</button></div>
+          </div>
+        </details>
+        <div id="mapping" hidden style="display:flex;flex-direction:column;gap:8px">
+          <div class="sep"></div>
+          <div class="field stack"><label for="map-price">Price</label><select id="map-price"></select></div>
+          <div class="field stack"><label for="map-outdoor">Outdoor temperature</label><select id="map-outdoor"></select></div>
+          <div class="field stack"><label for="map-indoor">Room temperature (for comparison)</label><select id="map-indoor"></select></div>
+        </div>
+      </div>
+    </details>
+    <form id="params" autocomplete="off" style="display:flex;flex-direction:column;gap:10px"></form>
+    <div class="row"><button class="btn" type="button" id="reset">Reset to blueprint defaults</button></div>
+  </aside>
+
+  <section class="stage" id="stage">
+    <div class="compare">
+      <div class="what" id="basewhat"></div>
+      <div class="row">
+        <button class="btn" type="button" id="pin">Pin current settings as baseline</button>
+        <button class="btn" type="button" id="unpin">Baseline: hold off</button>
+      </div>
+    </div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="card" id="card-temp" tabindex="0" aria-label="Target and room temperature over the day">
+      <div class="card-head">
+        <h2>Target and room temperature</h2>
+        <div class="legend" id="leg-temp"></div>
+      </div>
+      <svg class="chart" id="ch-temp" role="img" aria-label="Target and room temperature"></svg>
+    </div>
+    <div class="card" id="card-outdoor" tabindex="0" aria-label="Outdoor temperature over the day">
+      <div class="card-head">
+        <h2>Outdoor temperature</h2>
+      </div>
+      <svg class="chart" id="ch-outdoor" role="img" aria-label="Outdoor temperature"></svg>
+    </div>
+    <div class="card" id="card-price" tabindex="0" aria-label="Electricity price over the day">
+      <div class="card-head">
+        <h2>Electricity price</h2>
+        <div class="legend" id="leg-price"></div>
+      </div>
+      <svg class="chart" id="ch-price" role="img" aria-label="Price, forward and near-term averages"></svg>
+    </div>
+    <div class="card" id="card-power" tabindex="0" aria-label="Estimated power draw over the day">
+      <div class="card-head">
+        <h2>Estimated power draw</h2>
+        <div class="legend" id="leg-power"></div>
+      </div>
+      <svg class="chart" id="ch-power" role="img" aria-label="Electric power per 15 minutes"></svg>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+
+    <details class="panel" id="p-yaml">
+      <summary>Blueprint inputs</summary>
+      <div class="body">
+        <p class="hint">The current settings as blueprint inputs. Paste them under <code>use_blueprint: input:</code> in the automation's YAML, or copy the values into the editor by hand.</p>
+        <pre class="yaml" id="yaml"></pre>
+        <div class="row"><button class="btn" type="button" id="copy">Copy</button><span class="hint" id="copied" role="status"></span></div>
+      </div>
+    </details>
+    <details class="panel" id="p-table">
+      <summary>Table, every 15 minutes</summary>
+      <div class="body"><div class="tablewrap"><table id="table"></table></div></div>
+    </details>
+    <p class="note" id="approx">How close this is: the price windows are computed from the price curve the way tibber_prices builds its <code>⌀ Price Next Nh</code> sensors (from the next interval on). The day's forecast high and low are taken from the measured outdoor curve, and so is the hourly forecast behind the demand factor. Windows, presence, weekdays and manual overrides are not simulated. The room is a single-node model; it is good for comparing two parameter sets on the same day, not for predicting your bill. Calibrate it by loading a measured room temperature and adjusting <b>Room model</b> until the curves match.</p>
+  </section>
+</main>
+
+<script>
+// Simulation core mirroring blueprints/automation/Irame/adaptive_climate_setpoint.yaml
+// Works in browser and Node.
+(function (root) {
+  const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+  const HOUR = 3600e3, MIN = 60e3;
+
+  // ---- series helpers ------------------------------------------------------
+  // series: sorted [{t, v}] ; step value at time t (last value at or before t)
+  function stepAt(series, t) {
+    if (!series || !series.length || t < series[0].t) return null;
+    let lo = 0, hi = series.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (series[m].t <= t) lo = m; else hi = m - 1; }
+    return series[lo].v;
+  }
+  function linAt(series, t) {
+    if (!series || !series.length) return null;
+    if (t <= series[0].t) return t < series[0].t - 2 * HOUR ? null : series[0].v;
+    const last = series[series.length - 1];
+    if (t >= last.t) return t > last.t + 2 * HOUR ? null : last.v;
+    let lo = 0, hi = series.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (series[m].t <= t) lo = m; else hi = m; }
+    const a = series[lo], b = series[hi];
+    return a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t);
+  }
+
+  // Resample a stepped price series onto a fixed interval grid, as the
+  // tibber_prices sensors see it. History only records changes, so two
+  // equal neighbouring intervals collapse into one record - sampling each
+  // interval in its middle restores them.
+  function priceGrid(series, intervalMin, tStart, tEnd) {
+    const iv = intervalMin * MIN;
+    const g0 = Math.floor(tStart / iv) * iv;
+    const out = [];
+    for (let t = g0; t < tEnd; t += iv) {
+      const v = stepAt(series, t + iv / 2);
+      out.push({ t, v });
+    }
+    return { start: g0, iv, slots: out };
+  }
+
+  // Mean of the next N hours starting at the NEXT interval (tibber_prices next_avg_Nh).
+  function nextAvg(grid, t, hours) {
+    const k = Math.floor((t - grid.start) / grid.iv);
+    const n = Math.round(hours * HOUR / grid.iv);
+    let s = 0, c = 0;
+    for (let i = k + 1; i <= k + n && i < grid.slots.length; i++) {
+      const v = grid.slots[i] && grid.slots[i].v;
+      if (v !== null && v !== undefined && isFinite(v)) { s += v; c++; }
+    }
+    return c > 0 ? s / c : null;
+  }
+
+  function detectInterval(series) {
+    if (!series || series.length < 3) return 60;
+    let quarter = 0, total = 0;
+    for (const p of series) {
+      const d = new Date(p.t);
+      const m = d.getMinutes();
+      total++;
+      if (m === 15 || m === 30 || m === 45) quarter++;
+    }
+    return quarter / total > 0.05 ? 15 : 60;
+  }
+
+  // ---- defaults ------------------------------------------------------------
+  const DEFAULTS = {
+    // comfort axis
+    heat_comfort: 21, heat_charge: 23.5, heat_coast: 19,
+    cool_comfort: 24, cool_charge: 21, cool_coast: 26.5,
+    // price
+    price_cheap: 0.20, price_expensive: 0.35,
+    use_forward: true, forward_hours: 6, price_lookahead_margin: 0.15,
+    use_near: true, near_hours: 2, price_falling_margin: 0.10, price_falling_hold: 1,
+    // demand
+    use_demand: true, demand_lookahead_hours: 6, demand_cold_ref: 0, demand_hot_ref: 32,
+    // day type
+    cool_day_threshold: 24, heat_day_threshold: 16, heating_reference: 'average',
+    forecast_high: null, forecast_low: null, // null = from outdoor data
+    // schedule
+    night_start: '22:00', night_end: '06:00', storage_overrides_schedule: false,
+    // indoor
+    use_indoor: true, indoor_deadband: 1.0,
+    // timing guards
+    min_running_minutes: 3, min_idle_minutes: 3,
+    // room model
+    model_loss_w_per_k: 100, model_capacity_kwh_per_k: 4, model_max_kw: 5,
+    model_cop: 3.5, model_start_temp: null, model_ctrl_minutes: 30,
+  };
+
+  // Jinja's round filter is Python's round: ties go to the even neighbour.
+  function roundHalfEven(x) {
+    const r = Math.round(x);
+    return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+  }
+
+  function hm(str) {
+    const [h, m] = String(str).split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+
+  // ---- the automation's decision, one evaluation ---------------------------
+  // inputs: { now (ms), price, fwdMean, nearMean, outdoor, fwdOutdoor, high, low,
+  //           indoor, deviceOff }
+  function decide(P, x) {
+    const price_valid = x.price !== null && isFinite(x.price);
+    const current_price = price_valid ? x.price : 0;
+    const max_t = x.high, min_t = (x.low === null || x.low === undefined) ? x.high : x.low;
+    const heat_ref = P.heating_reference === 'high' ? max_t
+      : P.heating_reference === 'low' ? min_t : (max_t + min_t) / 2;
+    const day_type = max_t > P.cool_day_threshold ? 'cool' : heat_ref < P.heat_day_threshold ? 'heat' : 'off';
+
+    const lo = P.price_cheap, hi = P.price_expensive;
+    const pf = !price_valid ? 1 : (hi > lo ? (current_price - lo) / (hi - lo) : 0);
+    const pfc = clamp(pf, 0, 1);
+    const sig_abs = 2 * pfc - 1;
+
+    const fwd_valid = P.use_forward && price_valid && x.fwdMean !== null && x.fwdMean > 0;
+    let sig_fwd = 0;
+    if (fwd_valid) {
+      const span = P.price_lookahead_margin * x.fwdMean;
+      sig_fwd = span > 0 ? clamp((current_price - x.fwdMean) / span, -1, 1) : 0;
+    }
+    const raw = fwd_valid ? (sig_abs + sig_fwd) / 2 : sig_abs;
+    const sig_unheld = clamp(raw, -1, 1);
+
+    const near_valid = P.use_near && price_valid && x.nearMean !== null && x.nearMean > 0;
+    let falling = 0;
+    if (near_valid) {
+      const span = P.price_falling_margin * x.nearMean;
+      falling = span > 0 ? clamp((current_price - x.nearMean) / span, 0, 1) : 0;
+    }
+    const h = P.price_falling_hold;
+    const signal = sig_unheld < h ? sig_unheld + falling * (h - sig_unheld) : sig_unheld;
+
+    const cool = day_type === 'cool';
+    const a_comfort = cool ? P.cool_comfort : P.heat_comfort;
+    const a_charge = cool ? P.cool_charge : P.heat_charge;
+    const a_coast = cool ? P.cool_coast : P.heat_coast;
+
+    const demand_valid = P.use_demand && x.fwdOutdoor !== null && isFinite(x.fwdOutdoor);
+    let demand = 1;
+    if (!demand_valid) demand = 1;
+    else if (day_type === 'cool') {
+      const span = P.demand_hot_ref - P.cool_comfort;
+      demand = clamp(span > 0 ? (x.fwdOutdoor - P.cool_comfort) / span : 1, 0, 1);
+    } else if (day_type === 'heat') {
+      const span = P.heat_comfort - P.demand_cold_ref;
+      demand = clamp(span > 0 ? (P.heat_comfort - x.fwdOutdoor) / span : 1, 0, 1);
+    } else demand = 0;
+
+    const eff_charge = a_comfort + (a_charge - a_comfort) * demand;
+    const target_raw = signal > 0 ? a_comfort + signal * (a_coast - a_comfort)
+      : a_comfort + signal * (a_comfort - eff_charge);
+    const target = roundHalfEven(target_raw * 2) / 2;
+
+    const d = new Date(x.now);
+    const nowm = d.getHours() * 60 + d.getMinutes();
+    const ns = hm(P.night_start), ne = hm(P.night_end);
+    const is_night = ns <= ne ? (ns <= nowm && nowm < ne) : (nowm >= ns || nowm < ne);
+
+    const outdoor_valid = x.outdoor !== null && isFinite(x.outdoor);
+    let outdoor_off = false;
+    if (outdoor_valid) {
+      if (day_type === 'cool') outdoor_off = x.outdoor <= P.cool_comfort;
+      else if (day_type === 'heat') outdoor_off = x.outdoor >= P.heat_comfort;
+    }
+
+    const price_is_cheap = pfc <= 0;
+    const storage_charging = price_is_cheap && signal < 0 && day_type !== 'off' && eff_charge !== a_comfort;
+    const storage_bypass = P.storage_overrides_schedule && storage_charging;
+
+    const indoor_valid = P.use_indoor && x.indoor !== null && isFinite(x.indoor);
+    let indoor_satisfied = false;
+    if (indoor_valid) {
+      const t = target, i = x.indoor, db = P.indoor_deadband;
+      if (day_type === 'cool') indoor_satisfied = x.deviceOff ? i < t : i <= t - db;
+      else if (day_type === 'heat') indoor_satisfied = x.deviceOff ? i > t : i >= t + db;
+    }
+
+    const reasons = [];
+    if (day_type === 'off') reasons.push('dead-band day');
+    if (indoor_satisfied) reasons.push('rooms past target');
+    if (is_night && !storage_bypass) reasons.push('night');
+    if (outdoor_off && !storage_bypass) reasons.push('outdoor override');
+    const should_be_off = reasons.length > 0;
+
+    return {
+      day_type, price_factor: pfc, sig_abs, sig_fwd, fwd_valid, sig_unheld, falling, near_valid,
+      signal, demand, eff_charge, target_raw, target, is_night, outdoor_off,
+      storage_charging, storage_bypass, indoor_satisfied, should_be_off, reasons,
+      desired_mode: should_be_off ? 'off' : day_type, heat_ref,
+    };
+  }
+
+  // ---- COP ------------------------------------------------------------------
+  // Carnot-shaped, scaled so heating at 21 C in / 7 C out gives the nominal COP.
+  function carnotHeat(tin, tout) {
+    const th = tin + 273.15 + 12, tc = tout + 273.15 - 6;
+    return th / Math.max(8, th - tc);
+  }
+  function carnotCool(tin, tout) {
+    const tc = tin + 273.15 - 10, th = tout + 273.15 + 10;
+    return tc / Math.max(8, th - tc);
+  }
+  const HEAT_REF = carnotHeat(21, 7), COOL_REF = carnotCool(27, 35);
+
+  // ---- full run ---------------------------------------------------------------
+  // data: { price: [{t,v}], outdoor: [{t,v}], indoor?: [{t,v}], intervalMin? }
+  function simulate(data, Pin, range) {
+    const P = Object.assign({}, DEFAULTS, Pin);
+    const tStart = range.start, tEnd = range.end;
+    const ivMin = data.intervalMin || detectInterval(data.price);
+    const gridEnd = Math.max(tEnd, data.price.length ? data.price[data.price.length - 1].t + HOUR : tEnd);
+    const grid = priceGrid(data.price, ivMin, Math.min(tStart, data.price.length ? data.price[0].t : tStart), gridEnd);
+
+    // per-day outdoor high/low (proxy for the captured forecast)
+    const dayHL = {};
+    const dayKey = t => { const d = new Date(t); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
+    for (const p of data.outdoor) {
+      const k = dayKey(p.t);
+      if (!dayHL[k]) dayHL[k] = { hi: -Infinity, lo: Infinity };
+      dayHL[k].hi = Math.max(dayHL[k].hi, p.v); dayHL[k].lo = Math.min(dayHL[k].lo, p.v);
+    }
+
+    const H = P.model_loss_w_per_k / 1000; // kW/K
+    const C = Math.max(0.1, P.model_capacity_kwh_per_k); // kWh/K
+    const Pmax = P.model_max_kw;
+    const tauCtrl = Math.max(1, P.model_ctrl_minutes) / 60; // h
+    const dt = 1 / 60; // h
+
+    let tin = P.model_start_temp;
+    if (tin === null || tin === undefined || !isFinite(tin)) {
+      const m = data.indoor && data.indoor.length ? linAt(data.indoor, tStart) : null;
+      tin = m !== null ? m : P.heat_comfort;
+    }
+    let mode = 'off', setpoint = null, lastChange = tStart - 24 * HOUR;
+    const rows = [];
+    let energy = 0, cost = 0, heat = 0;
+
+    for (let t = tStart; t < tEnd; t += MIN) {
+      const k = dayKey(t);
+      const hl = dayHL[k] || { hi: null, lo: null };
+      const high = P.forecast_high !== null && P.forecast_high !== '' && isFinite(P.forecast_high) ? +P.forecast_high : hl.hi;
+      const low = P.forecast_low !== null && P.forecast_low !== '' && isFinite(P.forecast_low) ? +P.forecast_low : hl.lo;
+      const price = stepAt(data.price, t);
+      const outdoor = linAt(data.outdoor, t);
+      // hourly forecast proxy: the next N whole hours of the outdoor series
+      let fo = null;
+      { let s = 0, c = 0; const h0 = Math.floor(t / HOUR) * HOUR;
+        for (let i = 0; i < P.demand_lookahead_hours; i++) { const v = linAt(data.outdoor, h0 + i * HOUR + HOUR / 2); if (v !== null) { s += v; c++; } }
+        fo = c ? s / c : null; }
+      const x = {
+        now: t, price, outdoor, fwdOutdoor: fo,
+        fwdMean: nextAvg(grid, t, P.forward_hours),
+        nearMean: nextAvg(grid, t, P.near_hours),
+        high: isFinite(high) ? high : (outdoor ?? 10), low: isFinite(low) ? low : null,
+        indoor: tin, deviceOff: mode === 'off',
+      };
+      const d = decide(P, x);
+
+      // timing guards, then command
+      const since = (t - lastChange) / MIN;
+      const guard_ok = d.should_be_off ? (mode === 'off' || since >= P.min_running_minutes)
+        : (mode !== 'off' || since >= P.min_idle_minutes);
+      if (guard_ok) {
+        if (d.desired_mode !== mode) { mode = d.desired_mode; lastChange = t; }
+        if (mode !== 'off') setpoint = d.target;
+      }
+
+      // room model
+      const tout = outdoor ?? tin;
+      const loss = H * (tin - tout); // kW leaving the room
+      let pth = 0, pel = 0;
+      if (mode === 'heat') {
+        pth = clamp(loss + C * (setpoint - tin) / tauCtrl, 0, Pmax);
+        pel = pth / (P.model_cop * carnotHeat(tin, tout) / HEAT_REF);
+      } else if (mode === 'cool') {
+        pth = -clamp(-loss + C * (tin - setpoint) / tauCtrl, 0, Pmax);
+        pel = -pth / (P.model_cop * carnotCool(tin, tout) / COOL_REF);
+      }
+      tin += (pth - loss) * dt / C;
+      energy += pel * dt; heat += Math.abs(pth) * dt;
+      if (price !== null) cost += pel * dt * price;
+
+      rows.push(Object.assign(d, { t, price, outdoor, fwdMean: x.fwdMean, nearMean: x.nearMean,
+        fwdOutdoor: fo, high: x.high, low: x.low, mode, setpoint: mode === 'off' ? null : setpoint,
+        indoor: tin, pth, pel }));
+    }
+    let minIn = Infinity, maxIn = -Infinity;
+    for (const r of rows) { minIn = Math.min(minIn, r.indoor); maxIn = Math.max(maxIn, r.indoor); }
+    return { rows, energy, cost, heat, avgPrice: energy > 0 ? cost / energy : null, minIn, maxIn, intervalMin: ivMin };
+  }
+
+  const api = { DEFAULTS, decide, simulate, stepAt, linAt, priceGrid, nextAvg, detectInterval, clamp };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.SimCore = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+<script>
+(function () {
+  'use strict';
+  const S = window.SimCore;
+  const HOUR = 3600e3, MIN = 60e3;
+  const $ = id => document.getElementById(id);
+  const fmt = (v, d) => (v === null || v === undefined || !isFinite(v)) ? '–' : (Math.abs(v) < 0.5 * Math.pow(10, -d) ? 0 : v).toFixed(d);
+  const hhmm = t => { const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const dayStart = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const store = {
+    get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+  };
+
+  // ---------------------------------------------------------------- examples
+  // Hourly anchor prices (EUR/kWh incl. fees), stretched into 15-minute
+  // intervals with the small zig-zag the quarter-hour market shows.
+  const EXAMPLES = [
+    { id: 'ex-autumn', name: 'Example: autumn day, midday solar dip', lo: 2, hi: 10,
+      p: [0.27,0.265,0.26,0.26,0.265,0.28,0.31,0.34,0.345,0.32,0.28,0.24,0.21,0.195,0.20,0.23,0.27,0.32,0.37,0.38,0.35,0.32,0.30,0.285] },
+    { id: 'ex-winter', name: 'Example: winter day, evening peak, cheap night', lo: -5, hi: 1,
+      p: [0.29,0.27,0.255,0.245,0.24,0.25,0.29,0.34,0.36,0.345,0.33,0.32,0.31,0.31,0.32,0.34,0.37,0.41,0.42,0.39,0.35,0.33,0.31,0.30] },
+    { id: 'ex-windy', name: 'Example: windy spring day, slowly falling', lo: 5, hi: 13,
+      p: [0.26,0.255,0.25,0.25,0.25,0.255,0.25,0.24,0.23,0.22,0.21,0.20,0.19,0.185,0.18,0.175,0.19,0.23,0.29,0.31,0.29,0.27,0.26,0.255] },
+    { id: 'ex-summer', name: 'Example: summer heat, cooling day', lo: 20, hi: 33,
+      p: [0.27,0.26,0.25,0.25,0.26,0.27,0.29,0.31,0.28,0.23,0.19,0.16,0.14,0.13,0.14,0.17,0.22,0.28,0.33,0.36,0.34,0.31,0.29,0.28] },
+  ];
+  function buildExample(ex) {
+    const d0 = dayStart(Date.now()) - 24 * HOUR;
+    const price = [], outdoor = [];
+    for (let d = 0; d < 2; d++) for (let q = 0; q < 96; q++) {
+      const h = q / 4, i = Math.floor(h), f = h - i;
+      const a = ex.p[i % 24], b = ex.p[(i + 1) % 24];
+      const zig = ((q % 4) - 1.5) * 0.0012 * Math.sign(b - a);
+      const drift = d === 1 ? 0.006 * Math.sin(i / 3) : 0;
+      price.push({ t: d0 + d * 24 * HOUR + q * 15 * MIN, v: +(a + (b - a) * f + zig + drift).toFixed(4) });
+    }
+    for (let m = 0; m < 48 * 4; m++) {
+      const t = d0 + m * 15 * MIN, h = (m / 4) % 24;
+      const ph = Math.cos((h - 15) / 24 * 2 * Math.PI);
+      outdoor.push({ t, v: +((ex.lo + ex.hi) / 2 + (ex.hi - ex.lo) / 2 * ph + 0.3 * Math.sin(m / 5)).toFixed(2) });
+    }
+    return { series: { price, outdoor }, map: { price: 'price', outdoor: 'outdoor', indoor: '' }, days: [d0], label: ex.name, example: true };
+  }
+
+  // ---------------------------------------------------------------- parsing
+  function num(s) {
+    if (s === undefined || s === null) return NaN;
+    s = String(s).trim().replace(/^"|"$/g, '');
+    if (/^-?\d+,\d+$/.test(s)) s = s.replace(',', '.');
+    return s === '' ? NaN : Number(s);
+  }
+  function time(s) {
+    s = String(s).trim().replace(/^"|"$/g, '');
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) { const [h, m] = s.split(':').map(Number); return dayStart(Date.now()) + h * HOUR + m * MIN; }
+    const t = Date.parse(s.includes('T') || !/^\d{4}-\d{2}-\d{2} /.test(s) ? s : s.replace(' ', 'T'));
+    return isNaN(t) ? null : t;
+  }
+  function parseText(text) {
+    text = text.replace(/^﻿/, '').trim();
+    if (!text) throw new Error('The file is empty.');
+    const out = {};
+    const add = (name, t, v) => { if (t === null || !isFinite(v)) return; (out[name] = out[name] || []).push({ t, v }); };
+    if (text[0] === '[' || text[0] === '{') {
+      let j = JSON.parse(text);
+      if (!Array.isArray(j)) j = Object.values(j);
+      const flat = j.flat ? j.flat(2) : [].concat.apply([], j);
+      for (const s of flat) if (s && s.entity_id) add(s.entity_id, time(s.last_changed || s.last_updated || s.lu || ''), num(s.state));
+    } else {
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const head = lines[0];
+      const delim = (head.match(/;/g) || []).length > (head.match(/,/g) || []).length ? ';' : (head.includes('\t') ? '\t' : ',');
+      const cols = head.split(delim).map(c => c.trim().replace(/^"|"$/g, ''));
+      const lc = cols.map(c => c.toLowerCase());
+      const ie = lc.indexOf('entity_id'), is = lc.indexOf('state');
+      const it = ['last_changed', 'last_updated', 'time', 'timestamp'].map(k => lc.indexOf(k)).find(i => i >= 0);
+      if (ie >= 0 && is >= 0 && it !== undefined) {
+        for (const l of lines.slice(1)) { const c = l.split(delim); add(c[ie].trim().replace(/^"|"$/g, ''), time(c[it]), num(c[is])); }
+      } else {
+        for (const l of lines.slice(1)) {
+          const c = l.split(delim); const t = time(c[0]);
+          for (let k = 1; k < cols.length; k++) add(cols[k] || ('column ' + k), t, num(c[k]));
+        }
+      }
+    }
+    for (const k of Object.keys(out)) { out[k].sort((a, b) => a.t - b.t); if (out[k].length < 2) delete out[k]; }
+    if (!Object.keys(out).length) throw new Error('No numeric series found. Expected Home Assistant history (CSV or JSON) or a table with a time column.');
+    return out;
+  }
+  const median = a => { const s = a.map(p => p.v).sort((x, y) => x - y); return s[s.length >> 1]; };
+  function guessMap(series) {
+    const names = Object.keys(series);
+    const pick = (re, not, ok) => names.find(n => re.test(n.toLowerCase()) && !(not && not.test(n.toLowerCase())) && (!ok || ok(series[n])));
+    const price = pick(/price|preis|tibber|strom|electric|energy|epex|nordpool|awattar/, /next|avg|average|⌀|trend|level|rating|outlook|trajectory|min|max|rank/)
+      || names.find(n => { const m = median(series[n]); return m > -0.5 && m < 1.5; }) || names[0];
+    const temp = s => { const m = median(s); return m > -40 && m < 50; };
+    const outdoor = pick(/outdoor|outside|aussen|außen|exterior|weather|balkon|garten|garden|terrasse/, null, temp)
+      || names.find(n => n !== price && temp(series[n])) || '';
+    const indoor = pick(/indoor|room|innen|wohn|flur|hallway|living|zimmer|bed|schlaf|kitchen|küche|office|buero|büro/, /outdoor|outside|aussen|außen/, temp) || '';
+    return { price, outdoor: outdoor === price ? '' : outdoor, indoor: indoor === outdoor || indoor === price ? '' : indoor };
+  }
+
+  // ---------------------------------------------------------------- controls
+  // One schema drives the form, the YAML export and the stored settings.
+  const D = S.DEFAULTS;
+  const SCHEMA = [
+    { group: 'Comfort axis', open: true, items: [
+      { type: 'axis' },
+    ] },
+    { group: 'Price', open: true, items: [
+      { key: 'price_cheap', label: 'Cheap price', unit: '€/kWh', step: 0.01, min: 0, max: 5, sub: 'At or below this, power counts as fully cheap.' },
+      { key: 'price_expensive', label: 'Expensive price', unit: '€/kWh', step: 0.01, min: 0, max: 5 },
+      { type: 'sep' },
+      { key: 'use_forward', label: 'Forward Average Price Sensor', type: 'check' },
+      { key: 'forward_hours', label: 'Its window', unit: 'h', step: 1, min: 1, max: 12, dep: 'use_forward', sub: 'Which ⌀ Price Next Nh sensor it is.' },
+      { key: 'price_lookahead_margin', label: 'Forward Price Margin', type: 'range', step: 0.01, min: 0.02, max: 1, dep: 'use_forward' },
+      { type: 'sep' },
+      { key: 'use_near', label: 'Near-Term Average Price Sensor', type: 'check' },
+      { key: 'near_hours', label: 'Its window', unit: 'h', step: 1, min: 1, max: 4, dep: 'use_near', sub: 'Price Next 1h or 2h; short, so it asks whether the price is still going down.' },
+      { key: 'price_falling_margin', label: 'Falling Price Margin', type: 'range', step: 0.01, min: 0.02, max: 0.5, dep: 'use_near' },
+      { key: 'price_falling_hold', label: 'Hold While Falling', type: 'range', step: 0.1, min: 0, max: 1, dep: 'use_near', sub: '0 waits at comfort, 1 waits at coast.' },
+    ] },
+    { group: 'Demand', items: [
+      { key: 'use_demand', label: 'Forward Outdoor Mean helper', type: 'check' },
+      { key: 'demand_lookahead_hours', label: 'Demand Lookahead', unit: 'h', step: 1, min: 1, max: 24, dep: 'use_demand' },
+      { key: 'demand_cold_ref', label: 'Full Heating Demand Below', unit: '°C', step: 1, min: -25, max: 20, dep: 'use_demand' },
+      { key: 'demand_hot_ref', label: 'Full Cooling Demand Above', unit: '°C', step: 1, min: 20, max: 45, dep: 'use_demand' },
+    ] },
+    { group: 'Day type & schedule', items: [
+      { key: 'cool_day_threshold', label: 'Cooling Day Threshold', unit: '°C', step: 0.5, min: 10, max: 35 },
+      { key: 'heat_day_threshold', label: 'Heating Day Threshold', unit: '°C', step: 0.5, min: 0, max: 30 },
+      { key: 'heating_reference', label: 'Heating Day Reference', type: 'select', options: [['average', 'Average'], ['low', 'Forecast low'], ['high', 'Forecast high']] },
+      { key: 'forecast_high', label: 'Forecast high', unit: '°C', step: 0.5, min: -40, max: 50, blank: true, sub: 'Empty takes the day\'s measured maximum.' },
+      { key: 'forecast_low', label: 'Forecast low', unit: '°C', step: 0.5, min: -40, max: 50, blank: true },
+      { type: 'sep' },
+      { key: 'night_start', label: 'Night Mode Start', type: 'time' },
+      { key: 'night_end', label: 'Night Mode End', type: 'time' },
+      { key: 'storage_overrides_schedule', label: 'Charge Outside Normal Hours', type: 'check' },
+    ] },
+    { group: 'Rooms & timing', items: [
+      { key: 'use_indoor', label: 'Indoor Temperature Sensors', type: 'check', sub: 'Gates the device on the simulated room temperature.' },
+      { key: 'indoor_deadband', label: 'Indoor Deadband', unit: 'K', step: 0.1, min: 0.2, max: 5, dep: 'use_indoor' },
+      { key: 'min_running_minutes', label: 'Minimum Running Time', unit: 'min', step: 1, min: 0, max: 30 },
+      { key: 'min_idle_minutes', label: 'Minimum Idle Time', unit: 'min', step: 1, min: 0, max: 30 },
+    ] },
+    { group: 'Room model', items: [
+      { type: 'hint', text: 'Not blueprint inputs. A rough stand-in for your building, used to estimate when energy is bought.' },
+      { key: 'model_loss_w_per_k', label: 'Heat loss', unit: 'W/K', step: 10, min: 10, max: 1000, sub: 'Heat flow per kelvin between room and outside.' },
+      { key: 'model_capacity_kwh_per_k', label: 'Heat capacity', unit: 'kWh/K', step: 0.5, min: 0.5, max: 50, sub: 'Energy to warm the zone by one kelvin.' },
+      { key: 'model_max_kw', label: 'Max output', unit: 'kW', step: 0.1, min: 0.5, max: 20, sub: 'Heating or cooling output at full speed.' },
+      { key: 'model_cop', label: 'COP at 21 °C in / 7 °C out', unit: '', step: 0.1, min: 1, max: 7, sub: 'Falls as the gap between inside and outside grows.' },
+      { key: 'model_start_temp', label: 'Room at 00:00', unit: '°C', step: 0.5, min: 5, max: 35, blank: true, sub: 'Empty uses the measured room temperature, else heating comfort.' },
+    ] },
+  ];
+  const AXIS = [['charge', 'Charge'], ['comfort', 'Comfort'], ['coast', 'Coast']];
+  const BASE = Object.assign({}, D);
+
+  let P = Object.assign({}, BASE, store.get('acs-sim-params-v1') || {});
+  let pinned = store.get('acs-sim-baseline-v1');
+  const form = $('params');
+
+  function buildForm() {
+    form.textContent = '';
+    for (const g of SCHEMA) {
+      const det = document.createElement('details'); det.className = 'group'; det.open = !!g.open;
+      const sum = document.createElement('summary'); sum.textContent = g.group; det.appendChild(sum);
+      const body = document.createElement('div'); body.className = 'body'; det.appendChild(body);
+      for (const it of g.items) body.appendChild(control(it));
+      form.appendChild(det);
+    }
+  }
+  function control(it) {
+    if (it.type === 'sep') { const d = document.createElement('div'); d.className = 'sep'; return d; }
+    if (it.type === 'hint') { const p = document.createElement('p'); p.className = 'hint'; p.textContent = it.text; return p; }
+    if (it.type === 'axis') {
+      const g = document.createElement('div'); g.className = 'axis-grid';
+      const cell = (t, cls) => { const s = document.createElement('span'); s.className = cls || ''; s.textContent = t; g.appendChild(s); };
+      cell('', 'h'); cell('Heating', 'h'); cell('Cooling', 'h');
+      for (const [k, name] of AXIS) {
+        cell(name);
+        for (const mode of ['heat', 'cool']) {
+          const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.5'; inp.min = '12'; inp.max = '32';
+          inp.id = 'p-' + mode + '_' + k; inp.dataset.key = mode + '_' + k;
+          inp.setAttribute('aria-label', (mode === 'heat' ? 'Heating ' : 'Cooling ') + name + ' in °C');
+          g.appendChild(inp);
+        }
+      }
+      const wrap = document.createElement('div');
+      wrap.appendChild(g);
+      const p = document.createElement('p'); p.className = 'hint'; p.style.marginTop = '6px';
+      p.textContent = 'Comfort at a neutral price, charge while power is cheap, coast while it is dear (°C).';
+      wrap.appendChild(p);
+      return wrap;
+    }
+    const f = document.createElement('div'); f.className = 'field'; f.dataset.dep = it.dep || '';
+    const id = 'p-' + it.key;
+    if (it.type === 'check') {
+      const l = document.createElement('label'); l.className = 'toggle'; l.htmlFor = id;
+      const c = document.createElement('input'); c.type = 'checkbox'; c.id = id; c.dataset.key = it.key;
+      l.appendChild(c); l.appendChild(document.createTextNode(it.label));
+      f.appendChild(l);
+    } else {
+      const l = document.createElement('label'); l.htmlFor = id; l.textContent = it.label; f.appendChild(l);
+      if (it.type === 'range') {
+        const out = document.createElement('output'); out.id = id + '-o'; out.htmlFor = id;
+        f.appendChild(document.createElement('span'));
+        const s = document.createElement('div'); s.className = 'slider';
+        const r = document.createElement('input'); r.type = 'range'; r.id = id; r.dataset.key = it.key;
+        r.min = it.min; r.max = it.max; r.step = it.step;
+        s.appendChild(r); s.appendChild(out); f.appendChild(s);
+      } else if (it.type === 'select') {
+        const sel = document.createElement('select'); sel.id = id; sel.dataset.key = it.key;
+        for (const [v, t] of it.options) { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); }
+        f.appendChild(sel);
+      } else {
+        const n = document.createElement('span'); n.className = 'num';
+        const i = document.createElement('input'); i.id = id; i.dataset.key = it.key;
+        i.type = it.type === 'time' ? 'time' : 'number';
+        if (i.type === 'number') { i.step = it.step; i.min = it.min; i.max = it.max; if (it.blank) i.placeholder = 'auto'; }
+        n.appendChild(i);
+        if (it.type !== 'time') { const u = document.createElement('span'); u.className = 'unit'; u.textContent = it.unit || ''; n.appendChild(u); }
+        f.appendChild(n);
+      }
+    }
+    if (it.sub) { const s = document.createElement('div'); s.className = 'sub'; s.textContent = it.sub; f.appendChild(s); }
+    return f;
+  }
+  const BLANK = new Set(['forecast_high', 'forecast_low', 'model_start_temp']);
+  function writeForm() {
+    for (const el of form.querySelectorAll('[data-key]')) {
+      const k = el.dataset.key, v = P[k];
+      if (el.type === 'checkbox') el.checked = !!v;
+      else el.value = (v === null || v === undefined) ? '' : v;
+      const o = $(el.id + '-o'); if (o) o.textContent = Number(v).toFixed(2);
+    }
+    syncDeps();
+  }
+  function readForm() {
+    for (const el of form.querySelectorAll('[data-key]')) {
+      const k = el.dataset.key;
+      if (el.type === 'checkbox') P[k] = el.checked;
+      else if (el.type === 'number' || el.type === 'range') {
+        if (el.value === '' && BLANK.has(k)) P[k] = null;
+        else if (el.value !== '' && isFinite(+el.value)) P[k] = +el.value;
+      } else P[k] = el.value;
+      const o = $(el.id + '-o'); if (o) o.textContent = Number(P[k]).toFixed(2);
+    }
+    syncDeps();
+  }
+  function syncDeps() {
+    for (const f of form.querySelectorAll('.field[data-dep]')) {
+      const dep = f.dataset.dep; if (!dep) continue;
+      const on = !!P[dep];
+      f.classList.toggle('off', !on);
+      for (const i of f.querySelectorAll('input,select')) i.disabled = !on;
+    }
+  }
+
+  // ---------------------------------------------------------------- data state
+  let DATA = null, loaded = null;
+  const sourceSel = $('source'), daySel = $('day');
+  function fillSources() {
+    sourceSel.textContent = '';
+    for (const ex of EXAMPLES) { const o = document.createElement('option'); o.value = ex.id; o.textContent = ex.name; sourceSel.appendChild(o); }
+    if (loaded) { const o = document.createElement('option'); o.value = 'file'; o.textContent = 'Loaded: ' + loaded.label; sourceSel.appendChild(o); }
+  }
+  function setSource(id) {
+    if (id === 'file' && loaded) DATA = loaded;
+    else DATA = buildExample(EXAMPLES.find(e => e.id === id) || EXAMPLES[0]);
+    sourceSel.value = id === 'file' && loaded ? 'file' : (EXAMPLES.find(e => e.id === id) || EXAMPLES[0]).id;
+    $('mapping').hidden = !!DATA.example;
+    if (!DATA.example) fillMapping();
+    fillDays();
+    schedule();
+  }
+  function fillMapping() {
+    const names = Object.keys(DATA.series);
+    for (const role of ['price', 'outdoor', 'indoor']) {
+      const sel = $('map-' + role); sel.textContent = '';
+      if (role !== 'price') { const o = document.createElement('option'); o.value = ''; o.textContent = role === 'indoor' ? '(none)' : '(none, assume 10 °C)'; sel.appendChild(o); }
+      for (const n of names) { const o = document.createElement('option'); o.value = n; o.textContent = n + ' (' + DATA.series[n].length + ' values)'; sel.appendChild(o); }
+      sel.value = DATA.map[role] || '';
+    }
+  }
+  function priceSeries() {
+    const raw = DATA.series[DATA.map.price] || [];
+    const m = raw.length ? median(raw) : 0;
+    DATA.scale = m > 3 ? 100 : 1;
+    return DATA.scale === 1 ? raw : raw.map(p => ({ t: p.t, v: p.v / 100 }));
+  }
+  function fillDays() {
+    const pr = priceSeries();
+    daySel.textContent = '';
+    if (!pr.length) return;
+    const first = dayStart(pr[0].t), last = pr[pr.length - 1].t;
+    const days = [];
+    for (let d = first; d <= last; d = dayStart(d + 26 * HOUR)) days.push(d);
+    let pick = days[0];
+    for (const d of days) { if (pr[0].t <= d + HOUR && last >= d + 20 * HOUR) { pick = d; break; } }
+    if (DATA.example) pick = DATA.days[0];
+    for (const d of days) {
+      const o = document.createElement('option'); o.value = d;
+      o.textContent = new Date(d).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+      daySel.appendChild(o);
+    }
+    daySel.value = pick;
+    $('dayfield').hidden = !!DATA.example;
+  }
+  function loadText(text, label) {
+    const info = $('datainfo');
+    try {
+      const series = parseText(text);
+      loaded = { series, map: guessMap(series), label, example: false };
+      fillSources(); setSource('file');
+    } catch (e) {
+      info.textContent = 'Could not read that data: ' + e.message;
+      info.classList.add('err');
+    }
+  }
+
+  // ---------------------------------------------------------------- run
+  let RES = null, BASEP = null, BRES = null, RANGE = null, IND = null;
+  function baselineParams() {
+    if (pinned) return Object.assign({}, BASE, pinned);
+    return Object.assign({}, P, { use_near: false });
+  }
+  function run() {
+    const price = priceSeries();
+    const outdoor = DATA.series[DATA.map.outdoor] || [];
+    IND = DATA.map.indoor ? DATA.series[DATA.map.indoor] : null;
+    const d0 = +daySel.value || (price.length ? dayStart(price[0].t) : dayStart(Date.now()));
+    const start = Math.max(d0, price.length ? price[0].t : d0);
+    // history records changes, so the last price holds for at least one more interval
+    const end = Math.min(d0 + 24 * HOUR, price.length ? price[price.length - 1].t + S.detectInterval(price) * MIN : d0 + 24 * HOUR);
+    const outd = outdoor.length ? outdoor : [{ t: start - HOUR, v: 10 }, { t: end + 24 * HOUR, v: 10 }];
+    RANGE = { start: Math.floor(start / MIN) * MIN, end: Math.ceil(end / MIN) * MIN };
+    const data = { price, outdoor: outd, indoor: IND };
+    if (RANGE.end - RANGE.start < 30 * MIN) { RES = BRES = null; return; }
+    RES = S.simulate(data, P, RANGE);
+    BASEP = baselineParams();
+    BRES = S.simulate(data, BASEP, RANGE);
+    const info = $('datainfo'); info.classList.remove('err');
+    const span = (RANGE.end - RANGE.start) / HOUR;
+    const hl = RES.rows.length ? RES.rows[0] : null;
+    info.textContent = (DATA.example ? 'Made-up example prices, not your data. ' : '') +
+      (RES.intervalMin === 15 ? '15-minute' : 'Hourly') + ' prices' +
+      (DATA.scale === 100 ? ', converted from ct/kWh' : '') +
+      ' · ' + (span >= 23.9 ? 'full day' : span.toFixed(1) + ' h') +
+      (hl ? ' · ' + (hl.day_type === 'heat' ? 'heating' : hl.day_type === 'cool' ? 'cooling' : 'dead-band') + ' day (high ' + fmt(hl.high, 1) + ' °C, low ' + fmt(hl.low, 1) + ' °C)' : '');
+  }
+
+  let pending = false;
+  function schedule() { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; run(); render(); }); }
+
+  // ---------------------------------------------------------------- render
+  function render() {
+    renderCompare(); renderTiles(); renderCharts(); renderYaml(); renderTable();
+  }
+  function renderCompare() {
+    const w = $('basewhat'); w.textContent = '';
+    w.appendChild(document.createTextNode('Grey lines show the baseline: '));
+    const b = document.createElement('b');
+    b.textContent = pinned ? 'settings pinned ' + (pinned._at || '') : 'the same settings with the falling-price hold switched off';
+    w.appendChild(b);
+    $('unpin').disabled = !pinned;
+  }
+  function tile(k, v, unit, d) {
+    const t = document.createElement('div'); t.className = 'tile';
+    const a = document.createElement('div'); a.className = 'k'; a.textContent = k; t.appendChild(a);
+    const b = document.createElement('div'); b.className = 'v'; b.textContent = v;
+    if (unit) { const s = document.createElement('small'); s.textContent = unit; b.appendChild(s); }
+    t.appendChild(b);
+    for (const line of d) { const c = document.createElement('div'); c.className = 'd'; c.append(...line); t.appendChild(c); }
+    return t;
+  }
+  function delta(cur, base, digits, unit, lowerIsBetter) {
+    const s = document.createElement('span');
+    if (cur === null || base === null || !isFinite(cur) || !isFinite(base)) return s;
+    const diff = cur - base;
+    if (Math.abs(diff) < Math.pow(10, -digits) / 2) { s.textContent = 'no change'; return s; }
+    const better = lowerIsBetter ? diff < 0 : diff > 0;
+    s.className = better ? 'better' : 'worse';
+    const pct = base !== 0 ? ' (' + (diff > 0 ? '+' : '−') + Math.abs(diff / base * 100).toFixed(1) + ' %)' : '';
+    s.textContent = (diff > 0 ? '▲ +' : '▼ −') + Math.abs(diff).toFixed(digits) + unit + pct;
+    return s;
+  }
+  function renderTiles() {
+    const box = $('tiles'); box.textContent = '';
+    if (!RES) return;
+    const T = (s) => document.createTextNode(s);
+    box.appendChild(tile('Electricity cost', '€' + RES.cost.toFixed(2), '', [[delta(RES.cost, BRES.cost, 2, ' €', true)], [T('baseline €' + BRES.cost.toFixed(2))]]));
+    box.appendChild(tile('Average price paid', RES.avgPrice === null ? '–' : RES.avgPrice.toFixed(3), '€/kWh', [[delta(RES.avgPrice, BRES.avgPrice, 3, '', true)], [T('baseline ' + fmt(BRES.avgPrice, 3))]]));
+    box.appendChild(tile('Energy used', RES.energy.toFixed(1), 'kWh', [[delta(RES.energy, BRES.energy, 1, ' kWh', true)], [T('baseline ' + BRES.energy.toFixed(1))]]));
+    const endC = RES.rows[RES.rows.length - 1].indoor, endB = BRES.rows[BRES.rows.length - 1].indoor;
+    box.appendChild(tile('Room, coldest to warmest', RES.minIn.toFixed(1) + '–' + RES.maxIn.toFixed(1), '°C', [
+      [T('ends the day at ' + endC.toFixed(1) + ' °C')],
+      [T('baseline ' + BRES.minIn.toFixed(1) + '–' + BRES.maxIn.toFixed(1) + ', ends at ' + endB.toFixed(1))],
+    ]));
+  }
+
+  // ---- charts
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (name, attrs, parent) => { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+  const M = { l: 44, r: 14, t: 8, b: 22 };
+  let GEO = null;
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => span / s <= n) || 10 * mag;
+    const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
+    const out = []; for (let v = a; v <= b + step / 1e6; v += step) out.push(+v.toFixed(6));
+    return { ticks: out, lo: a, hi: b, step };
+  }
+  function frame(svg, h, yt, fmtY, band) {
+    svg.textContent = '';
+    const w = Math.max(280, svg.parentNode.clientWidth - 24);
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); svg.setAttribute('height', h);
+    const pb = h - M.b - (band || 0);
+    const X = t => M.l + (t - RANGE.start) / (RANGE.end - RANGE.start) * (w - M.l - M.r);
+    const Y = v => M.t + (yt.hi - v) / (yt.hi - yt.lo) * (pb - M.t);
+    // night shading
+    const ns = hmToMin(P.night_start), ne = hmToMin(P.night_end);
+    for (let d = dayStart(RANGE.start) - 24 * HOUR; d < RANGE.end; d += 24 * HOUR) {
+      const segs = ns <= ne ? [[ns, ne]] : [[ns, 1440], [0, ne]];
+      for (const [a, b] of segs) {
+        const x0 = X(Math.max(RANGE.start, d + a * MIN)), x1 = X(Math.min(RANGE.end, d + b * MIN));
+        if (x1 > x0) el('rect', { x: x0, y: M.t, width: x1 - x0, height: pb - M.t, class: 'night' }, svg);
+      }
+    }
+    for (const v of yt.ticks) {
+      const y = Y(v);
+      el('line', { x1: M.l, x2: w - M.r, y1: y, y2: y, class: v === yt.lo ? 'base' : 'grid' }, svg);
+      const tx = el('text', { x: M.l - 6, y: y + 3.5, 'text-anchor': 'end' }, svg); tx.textContent = fmtY(v);
+    }
+    const stepH = w < 520 ? 6 : 3;
+    for (let t = Math.ceil(RANGE.start / HOUR) * HOUR; t <= RANGE.end; t += HOUR) {
+      const hr = new Date(t).getHours(); if (hr % stepH) continue;
+      const tx = el('text', { x: X(t), y: h - 6, 'text-anchor': 'middle' }, svg); tx.textContent = String(hr).padStart(2, '0') + ':00';
+    }
+    return { svg, w, h, pb, X, Y };
+  }
+  function hmToMin(s) { const [h, m] = String(s).split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+  function stepPath(rows, X, Y, get) {
+    let d = '', prev = null, open = false;
+    for (const r of rows) {
+      const v = get(r);
+      if (v === null || v === undefined || !isFinite(v)) { if (open) d += 'H' + X(r.t).toFixed(1); open = false; prev = null; continue; }
+      if (!open) { d += 'M' + X(r.t).toFixed(1) + ',' + Y(v).toFixed(1); open = true; }
+      else if (v !== prev) d += 'H' + X(r.t).toFixed(1) + 'V' + Y(v).toFixed(1);
+      prev = v;
+    }
+    if (open) d += 'H' + X(RANGE.end).toFixed(1);
+    return d;
+  }
+  function linePath(pts, X, Y) {
+    let d = '', open = false;
+    for (const p of pts) {
+      if (p.v === null || !isFinite(p.v)) { open = false; continue; }
+      d += (open ? 'L' : 'M') + X(p.t).toFixed(1) + ',' + Y(p.v).toFixed(1); open = true;
+    }
+    return d;
+  }
+  const every = (rows, n, get) => rows.filter((r, i) => i % n === 0 || i === rows.length - 1).map(r => ({ t: r.t, v: get(r) }));
+  function legend(id, items) {
+    const box = $(id); box.textContent = '';
+    for (const [cls, label, kind] of items) {
+      const s = document.createElement('span'); const i = document.createElement('i');
+      i.className = cls + (kind ? ' ' + kind : ''); s.appendChild(i); s.appendChild(document.createTextNode(label)); box.appendChild(s);
+    }
+  }
+  const quarterIndex = t => Math.floor(t / (15 * MIN)) - Math.floor(RANGE.start / (15 * MIN));
+  function quarterMeans(rows, get) {
+    const out = []; let acc = 0, n = 0, t0 = null;
+    for (const r of rows) {
+      const q = Math.floor(r.t / (15 * MIN)) * 15 * MIN;
+      if (t0 !== null && q !== t0) { out.push({ t: t0, v: acc / n }); acc = 0; n = 0; }
+      t0 = q; acc += get(r); n++;
+    }
+    if (n) out.push({ t: t0, v: acc / n });
+    return out;
+  }
+  function renderCharts() {
+    const svgs = ['ch-temp', 'ch-price', 'ch-power', 'ch-outdoor'].map($);
+    if (!RES) { svgs.forEach(s => s.textContent = ''); return; }
+    const rows = RES.rows, brows = BRES.rows;
+    GEO = {};
+    // temperatures
+    {
+      const ind = IND ? IND.filter(p => p.t >= RANGE.start && p.t <= RANGE.end) : [];
+      let lo = Infinity, hi = -Infinity;
+      const see = v => { if (v !== null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
+      rows.forEach(r => { see(r.target); see(r.indoor); });
+      brows.forEach(r => see(r.target)); ind.forEach(p => see(p.v));
+      const yt = niceTicks(lo - 0.3, hi + 0.3, 5);
+      const g = frame(svgs[0], 286, yt, v => v.toFixed(yt.step < 1 ? 1 : 0) + '°', 30);
+      // device-running strips along the top
+      const strip = (rs, y, cls) => {
+        let s = null;
+        const flush = (t) => { if (s !== null) el('rect', { x: g.X(s), y, width: Math.max(1, g.X(t) - g.X(s)), height: 5, rx: 1.5, class: cls }, g.svg); s = null; };
+        for (const r of rs) { if (r.mode !== 'off') { if (s === null) s = r.t; } else flush(r.t); }
+        flush(RANGE.end);
+      };
+      el('path', { d: stepPath(brows, g.X, g.Y, r => r.target), class: 'ln thin c-base' }, g.svg);
+      if (ind.length) el('path', { d: linePath(ind.map(p => ({ t: p.t, v: p.v })), g.X, g.Y), class: 'ln thin c-room measured' }, g.svg);
+      el('path', { d: linePath(every(rows, 5, r => r.indoor), g.X, g.Y), class: 'ln c-room' }, g.svg);
+      el('path', { d: stepPath(rows, g.X, g.Y, r => r.target), class: 'ln thin c-target measured' }, g.svg);
+      el('path', { d: stepPath(rows, g.X, g.Y, r => r.mode === 'off' ? null : r.target), class: 'ln c-target' }, g.svg);
+      GEO.temp = g;
+      // when the device runs: current settings, then baseline
+      strip(rows, g.pb + 14, 'c-target');
+      strip(brows, g.pb + 22, 'c-base');
+      const l1 = el('text', { x: M.l - 6, y: g.pb + 19, 'text-anchor': 'end', class: 'strip-lbl' }, g.svg); l1.textContent = 'runs';
+      const l2 = el('text', { x: M.l - 6, y: g.pb + 27, 'text-anchor': 'end', class: 'strip-lbl' }, g.svg); l2.textContent = 'base';
+      legend('leg-temp', [['c-target', 'Target (faint while off)'], ['c-base', 'Target, baseline', 'thin'], ['c-room', 'Room (model)']]
+        .concat(ind.length ? [['c-room', 'Room (measured)', 'thin fade']] : []));
+    }
+    // outdoor, one series: the title names it
+    {
+      let lo = Infinity, hi = -Infinity;
+      rows.forEach(r => { if (r.outdoor !== null && isFinite(r.outdoor)) { lo = Math.min(lo, r.outdoor); hi = Math.max(hi, r.outdoor); } });
+      if (!isFinite(lo)) { lo = 0; hi = 10; }
+      const yt = niceTicks(lo - 0.5, hi + 0.5, 3);
+      const g = frame(svgs[3], 130, yt, v => v.toFixed(yt.step < 1 ? 1 : 0) + '°');
+      el('path', { d: linePath(every(rows, 5, r => r.outdoor), g.X, g.Y), class: 'ln c-outdoor' }, g.svg);
+      GEO.outdoor = g;
+    }
+    // price
+    {
+      let lo = Infinity, hi = -Infinity;
+      const see = v => { if (v !== null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
+      rows.forEach(r => { see(r.price); if (P.use_forward) see(r.fwdMean); if (P.use_near) see(r.nearMean); });
+      see(P.price_cheap); see(P.price_expensive);
+      const yt = niceTicks(lo, hi, 4);
+      const g = frame(svgs[1], 190, yt, v => v.toFixed(yt.step < 0.01 ? 3 : 2));
+      if (P.use_near) {
+        let s = null, f = 0;
+        const flush = t => { if (s !== null && f > 0.001) el('rect', { x: g.X(s), y: M.t, width: Math.max(0.5, g.X(t) - g.X(s)), height: g.pb - M.t, class: 'hold', opacity: (0.06 + 0.22 * f).toFixed(3) }, g.svg); s = null; };
+        for (const r of rows) { const held = r.signal !== r.sig_unheld ? r.falling : 0; if (s === null || held !== f) { flush(r.t); s = r.t; f = held; } }
+        flush(RANGE.end);
+      }
+      for (const [v, name] of [[P.price_cheap, 'cheap'], [P.price_expensive, 'expensive']]) {
+        if (v < yt.lo || v > yt.hi) continue;
+        el('line', { x1: M.l, x2: g.w - M.r, y1: g.Y(v), y2: g.Y(v), class: 'ref' }, g.svg);
+        const tx = el('text', { x: g.w - M.r, y: g.Y(v) - 3, 'text-anchor': 'end' }, g.svg); tx.textContent = name;
+      }
+      if (P.use_forward) el('path', { d: stepPath(rows, g.X, g.Y, r => r.fwdMean), class: 'ln thin c-forward' }, g.svg);
+      if (P.use_near) el('path', { d: stepPath(rows, g.X, g.Y, r => r.nearMean), class: 'ln thin c-near' }, g.svg);
+      el('path', { d: stepPath(rows, g.X, g.Y, r => r.price), class: 'ln c-price' }, g.svg);
+      GEO.price = g;
+      const items = [['c-price', 'Price now']];
+      if (P.use_forward) items.push(['c-forward', '⌀ next ' + P.forward_hours + ' h', 'thin']);
+      if (P.use_near) { items.push(['c-near', '⌀ next ' + P.near_hours + ' h', 'thin']); items.push(['c-price', 'Holding: price still falling', 'box fade']); }
+      legend('leg-price', items);
+    }
+    // power, as 15-minute means
+    {
+      const cur = quarterMeans(rows, r => r.pel), base = quarterMeans(brows, r => r.pel);
+      let hi = 0.5; cur.concat(base).forEach(p => hi = Math.max(hi, p.v));
+      const yt = niceTicks(0, hi, 3);
+      const g = frame(svgs[2], 150, yt, v => v.toFixed(yt.step < 1 ? 1 : 0) + ' kW');
+      const stepPts = pts => {
+        let d = ''; pts.forEach((p, i) => { const x = g.X(p.t), y = g.Y(p.v); d += (i ? 'H' + x.toFixed(1) + 'V' : 'M' + x.toFixed(1) + ',') + y.toFixed(1); });
+        if (pts.length) d += 'H' + g.X(Math.min(RANGE.end, pts[pts.length - 1].t + 15 * MIN)).toFixed(1);
+        return d;
+      };
+      const dc = stepPts(cur);
+      if (cur.length) el('path', { d: dc + 'V' + g.Y(0).toFixed(1) + 'H' + g.X(cur[0].t).toFixed(1) + 'Z', class: 'area c-target' }, g.svg);
+      el('path', { d: stepPts(base), class: 'ln thin c-base' }, g.svg);
+      el('path', { d: dc, class: 'ln c-target' }, g.svg);
+      GEO.power = g; GEO.powerCur = cur; GEO.powerBase = base;
+      legend('leg-power', [['c-target', 'Current settings'], ['c-base', 'Baseline', 'thin']]);
+    }
+    if (hoverIdx !== null) showAt(hoverIdx);
+  }
+
+  // ---- hover: one crosshair across all three charts, one tooltip
+  let hoverIdx = null;
+  const tip = $('tip'), stage = $('stage');
+  function idxFromEvent(e, g) {
+    const r = g.svg.getBoundingClientRect();
+    const x = (e.clientX - r.left) * g.w / r.width;
+    const t = RANGE.start + (x - M.l) / (g.w - M.l - M.r) * (RANGE.end - RANGE.start);
+    return Math.max(0, Math.min(RES.rows.length - 1, Math.round((t - RANGE.start) / MIN)));
+  }
+  function showAt(i) {
+    if (!RES || !GEO) return;
+    hoverIdx = i;
+    const r = RES.rows[i], b = BRES.rows[i];
+    for (const key of ['temp', 'outdoor', 'price', 'power']) {
+      const g = GEO[key]; if (!g) continue;
+      let c = g.svg.querySelector('.cross');
+      if (!c) c = el('line', { class: 'cross' }, g.svg);
+      const x = g.X(r.t);
+      c.setAttribute('x1', x); c.setAttribute('x2', x); c.setAttribute('y1', M.t); c.setAttribute('y2', g.pb);
+      g.svg.querySelectorAll('.dot').forEach(d => d.remove());
+      const dot = (v, cls) => { if (v !== null && isFinite(v)) el('circle', { cx: x, cy: g.Y(v), r: 4, class: 'dot ' + cls }, g.svg); };
+      if (key === 'temp') { dot(r.target, 'c-target'); dot(r.indoor, 'c-room'); }
+      if (key === 'outdoor') dot(r.outdoor, 'c-outdoor');
+      if (key === 'price') dot(r.price, 'c-price');
+    }
+    const q = quarterIndex(r.t);
+    const pc = GEO.powerCur[q], pb = GEO.powerBase[q];
+    tip.textContent = '';
+    const head = document.createElement('div'); head.className = 't'; head.textContent = hhmm(r.t); tip.appendChild(head);
+    const row = (cls, label, value) => {
+      const d = document.createElement('div'); d.className = 'r';
+      const i = document.createElement('i'); if (cls) i.className = cls; d.appendChild(i);
+      const l = document.createElement('span'); l.className = 'l'; l.textContent = label; d.appendChild(l);
+      const v = document.createElement('b'); v.textContent = value; d.appendChild(v);
+      tip.appendChild(d);
+    };
+    const mode = x => x.mode === 'off' ? 'off' : x.mode;
+    row('c-target', 'Target', fmt(r.target, 1) + ' °C · ' + mode(r));
+    row('c-base', 'Baseline', fmt(b.target, 1) + ' °C · ' + mode(b));
+    row('c-room', 'Room (model)', fmt(r.indoor, 1) + ' °C');
+    row('c-outdoor', 'Outdoor', fmt(r.outdoor, 1) + ' °C');
+    row('c-price', 'Price now', fmt(r.price, 3));
+    if (P.use_near) row('c-near', '⌀ next ' + P.near_hours + ' h', fmt(r.nearMean, 3));
+    if (P.use_forward) row('c-forward', '⌀ next ' + P.forward_hours + ' h', fmt(r.fwdMean, 3));
+    row('', 'Signal', (r.signal > 0 ? '+' : '') + fmt(r.signal, 2) + (r.signal !== r.sig_unheld ? '  (was ' + fmt(r.sig_unheld, 2) + ')' : ''));
+    row('c-target', 'Power', (pc ? pc.v.toFixed(2) : '–') + ' kW');
+    row('c-base', 'Power, baseline', (pb ? pb.v.toFixed(2) : '–') + ' kW');
+    const why = document.createElement('div'); why.className = 'why';
+    const parts = [];
+    if (r.near_valid && r.falling > 0 && r.signal !== r.sig_unheld) parts.push('Holding ' + Math.round(r.falling * 100) + ' %: the next ' + P.near_hours + ' h are cheaper.');
+    if (r.mode === 'off' && r.reasons.length) parts.push('Off: ' + r.reasons.join(', ') + '.');
+    else if (r.mode === 'off' && r.should_be_off === false) parts.push('Off: timing guard.');
+    if (r.storage_bypass) parts.push('Charging through night mode.');
+    why.textContent = parts.join(' ');
+    if (parts.length) tip.appendChild(why);
+    tip.hidden = false;
+    // place beside the crosshair, inside the stage
+    const g = GEO.temp, sr = stage.getBoundingClientRect(), cr = g.svg.getBoundingClientRect();
+    const px = cr.left - sr.left + g.X(r.t) * cr.width / g.w;
+    const tw = tip.offsetWidth, top = $('card-temp').offsetTop + 44;
+    let left = px + 14; if (left + tw > stage.clientWidth) left = px - tw - 14; if (left < 0) left = 0;
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+  }
+  function hide() { hoverIdx = null; tip.hidden = true; if (GEO) for (const k of ['temp', 'outdoor', 'price', 'power']) if (GEO[k]) GEO[k].svg.querySelectorAll('.cross,.dot').forEach(n => n.remove()); }
+  for (const [card, key] of [['card-temp', 'temp'], ['card-outdoor', 'outdoor'], ['card-price', 'price'], ['card-power', 'power']]) {
+    const c = $(card);
+    c.addEventListener('pointermove', e => { if (GEO && GEO[key]) showAt(idxFromEvent(e, GEO[key])); });
+    c.addEventListener('pointerleave', hide);
+    c.addEventListener('keydown', e => {
+      if (!RES) return;
+      const n = RES.rows.length;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const cur = hoverIdx === null ? 0 : hoverIdx;
+        showAt(Math.max(0, Math.min(n - 1, cur + (e.key === 'ArrowRight' ? 15 : -15))));
+      } else if (e.key === 'Escape') hide();
+    });
+    c.addEventListener('blur', hide);
+  }
+
+  // ---- yaml + table
+  function renderYaml() {
+    const sc = DATA && DATA.scale === 100 ? 100 : 1;
+    const n = v => +(+v).toFixed(4);
+    const L = [];
+    L.push('# Adaptive Climate Setpoint inputs, from the simulator');
+    for (const m of ['heat', 'cool']) for (const [k] of AXIS) L.push(m + '_' + k + ': ' + n(P[m + '_' + k]));
+    L.push('price_cheap: ' + n(P.price_cheap * sc) + (sc === 100 ? '   # ct/kWh, like your sensor' : ''));
+    L.push('price_expensive: ' + n(P.price_expensive * sc));
+    if (P.use_forward) { L.push('price_forecast_sensor: sensor.REPLACE_price_next_' + P.forward_hours + 'h'); L.push('price_lookahead_margin: ' + n(P.price_lookahead_margin)); }
+    else L.push('price_forecast_sensor: []');
+    if (P.use_near) {
+      L.push('price_near_sensor: sensor.REPLACE_price_next_' + P.near_hours + 'h');
+      L.push('price_falling_margin: ' + n(P.price_falling_margin));
+      L.push('price_falling_hold: ' + n(P.price_falling_hold));
+    } else L.push('price_near_sensor: []');
+    if (P.use_demand) {
+      L.push('demand_lookahead_hours: ' + n(P.demand_lookahead_hours));
+      L.push('demand_cold_ref: ' + n(P.demand_cold_ref));
+      L.push('demand_hot_ref: ' + n(P.demand_hot_ref));
+    } else L.push('forward_outdoor_helper: []');
+    L.push('cool_day_threshold: ' + n(P.cool_day_threshold));
+    L.push('heat_day_threshold: ' + n(P.heat_day_threshold));
+    L.push('heating_reference: ' + P.heating_reference);
+    L.push('night_start: "' + P.night_start + ':00"');
+    L.push('night_end: "' + P.night_end + ':00"');
+    L.push('storage_overrides_schedule: ' + !!P.storage_overrides_schedule);
+    if (P.use_indoor) L.push('indoor_deadband: ' + n(P.indoor_deadband)); else L.push('indoor_sensors: []');
+    L.push('min_running_minutes: ' + n(P.min_running_minutes));
+    L.push('min_idle_minutes: ' + n(P.min_idle_minutes));
+    $('yaml').textContent = L.join('\n');
+  }
+  function renderTable() {
+    const tb = $('table'); tb.textContent = '';
+    if (!RES || !$('p-table').open) return;
+    const cols = ['Time', 'Price', '⌀ near', '⌀ fwd', 'Hold', 'Signal', 'Target', 'Base', 'Mode', 'Room', 'Outdoor', 'kW', 'Base kW'];
+    const thead = document.createElement('thead'), tr = document.createElement('tr');
+    for (const c of cols) { const th = document.createElement('th'); th.textContent = c; tr.appendChild(th); }
+    thead.appendChild(tr); tb.appendChild(thead);
+    const body = document.createElement('tbody');
+    for (let i = 0; i < RES.rows.length; i += 15) {
+      const r = RES.rows[i], b = BRES.rows[i], q = quarterIndex(r.t);
+      const vals = [hhmm(r.t), fmt(r.price, 3), P.use_near ? fmt(r.nearMean, 3) : '–', P.use_forward ? fmt(r.fwdMean, 3) : '–',
+        r.signal !== r.sig_unheld ? Math.round(r.falling * 100) + ' %' : '', fmt(r.signal, 2), fmt(r.target, 1), fmt(b.target, 1),
+        r.mode, fmt(r.indoor, 1), fmt(r.outdoor, 1), GEO && GEO.powerCur[q] ? GEO.powerCur[q].v.toFixed(2) : '–', GEO && GEO.powerBase[q] ? GEO.powerBase[q].v.toFixed(2) : '–'];
+      const row = document.createElement('tr');
+      for (const v of vals) { const td = document.createElement('td'); td.textContent = v; row.appendChild(td); }
+      body.appendChild(row);
+    }
+    tb.appendChild(body);
+  }
+
+  // ---------------------------------------------------------------- wiring
+  form.addEventListener('input', () => { readForm(); store.set('acs-sim-params-v1', P); schedule(); });
+  form.addEventListener('submit', e => e.preventDefault());
+  $('reset').addEventListener('click', () => { P = Object.assign({}, BASE); writeForm(); store.set('acs-sim-params-v1', P); schedule(); });
+  $('pin').addEventListener('click', () => {
+    pinned = Object.assign({}, P, { _at: 'at ' + new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) });
+    store.set('acs-sim-baseline-v1', pinned); schedule();
+  });
+  $('unpin').addEventListener('click', () => { pinned = null; store.set('acs-sim-baseline-v1', null); schedule(); });
+  sourceSel.addEventListener('change', () => setSource(sourceSel.value));
+  daySel.addEventListener('change', schedule);
+  for (const role of ['price', 'outdoor', 'indoor']) $('map-' + role).addEventListener('change', e => { DATA.map[role] = e.target.value; if (role === 'price') fillDays(); schedule(); });
+  $('file').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => loadText(String(rd.result), f.name);
+    rd.onerror = () => { $('datainfo').textContent = 'Could not read that file.'; $('datainfo').classList.add('err'); };
+    rd.readAsText(f);
+    e.target.value = '';
+  });
+  $('usepaste').addEventListener('click', () => loadText($('paste').value, 'pasted data'));
+  $('p-table').addEventListener('toggle', renderTable);
+  $('copy').addEventListener('click', () => {
+    const txt = $('yaml').textContent, done = $('copied');
+    const sel = () => { const r = document.createRange(); r.selectNodeContents($('yaml')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); done.textContent = 'Selected. Press Ctrl+C or ⌘C to copy.'; };
+    try { navigator.clipboard.writeText(txt).then(() => { done.textContent = 'Copied.'; }, sel); } catch (e) { sel(); }
+  });
+  let rw = null;
+  window.addEventListener('resize', () => { clearTimeout(rw); rw = setTimeout(() => { if (RES) renderCharts(); }, 80); });
+
+  buildForm(); writeForm(); fillSources(); setSource(EXAMPLES[0].id);
+})();
+</script>
+</body>
+</html>
