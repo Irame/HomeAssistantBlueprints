@@ -10,6 +10,7 @@ Automatically switches your climate devices between heating, cooling, and off, a
 
 - **Today's forecast** (from any `weather` entity) — decides *whether* today heats, cools, or stays off in a dead band. Cooling is decided on the day's **high**; heating on the **average of the high and low**, because heating load follows the whole day rather than its warmest moment. The forecast does **not** move the setpoint.
 - **Electricity price** — decides *where in your comfort range* the setpoint sits. One signed signal runs from **charge** (cheap) through **comfort** (neutral) to **coast** (expensive).
+- **Where the price is heading** (optional, from a near-term average) — holds the target back while the price is still falling, so the device does its hardest work at the low instead of on the way down to it.
 - **The demand ahead** (from the hourly forecast) — decides *how deeply* to charge. A cheap hour before a cold night is worth far more than the same cheap hour before a mild evening.
 - **Night mode**, **disabled weekdays**, **presence**, **open windows** — force the device off.
 - **Measured room temperature** (optional, any number of sensors) — holds the device off while the rooms are already past the target, which a unit's own thermostat often cannot judge from inside its own airflow.
@@ -87,6 +88,9 @@ This needs the **Forward Outdoor Mean Storage Helper**, which a separate 15-minu
 | Expensive Price Threshold | At or above this, power counts as fully expensive | 0.35 |
 | Forward Average Price Sensor | Optional sensor holding the mean price of the coming hours | — |
 | Forward Price Margin | How far below the forward average earns a full charge signal | 0.15 |
+| Near-Term Average Price Sensor | Optional sensor holding the mean price of the next hour or two | — |
+| Falling Price Margin | How far above the near-term average holds the target completely | 0.10 |
+| Hold While Falling | Where the target waits while the price falls: 0 = comfort, 1 = coast | 1 |
 | Charge Outside Normal Hours | Let cheap-price charging ignore night mode | off |
 | Night Mode Start | Time the device is forced off overnight | 22:00:00 |
 | Night Mode End | Time night mode ends | 06:00:00 |
@@ -101,9 +105,10 @@ Note: the **indoor** setpoints and the **outdoor** day thresholds are separate i
 2. **Absolute price signal** (−1…+1) — −1 at or below the cheap threshold, +1 at or above the expensive one.
 3. **Forward price signal** (−1…+1) — only if a Forward Average Price Sensor is set: how far the current price sits below or above the mean price of the coming hours, scaled by the Forward Price Margin. Without it, only the absolute signal is used.
 4. **Combined signal** — the two are averaged, so charging requires both to agree that now is a good moment.
-5. **Demand factor** (0–1) — how much heating or cooling the lookahead window will need, from the forward outdoor mean. It pulls the charge anchor toward comfort so shallow demand earns a shallow charge.
-6. **Target temperature** — slid along the Charge…Comfort…Coast axis by that signal, then snapped to each device's own temperature step and clamped to its own `min_temp`/`max_temp`.
-7. **Off overrides** — an open window, a disabled weekday, nobody home, a dead-band day, or the rooms already being past target always force the device off. Night mode and the live outdoor override also force it off, unless *Charge Outside Normal Hours* is on and the automation is genuinely charging.
+5. **Falling-price hold** — only if a Near-Term Average Price Sensor is set: while the current price sits above the average of the next hour or two, the signal is pulled toward the hold point (coast by default), fully once now is dearer by the Falling Price Margin. It never pulls a signal back from further toward coast.
+6. **Demand factor** (0–1) — how much heating or cooling the lookahead window will need, from the forward outdoor mean. It pulls the charge anchor toward comfort so shallow demand earns a shallow charge.
+7. **Target temperature** — slid along the Charge…Comfort…Coast axis by that signal, then snapped to each device's own temperature step and clamped to its own `min_temp`/`max_temp`.
+8. **Off overrides** — an open window, a disabled weekday, nobody home, a dead-band day, or the rooms already being past target always force the device off. Night mode and the live outdoor override also force it off, unless *Charge Outside Normal Hours* is on and the automation is genuinely charging.
 
 #### Not running when the rooms are already there
 
@@ -140,10 +145,36 @@ With the [tibber_prices](https://github.com/jpawlowski/hass.tibber_prices) HACS 
 
 The automation only sends a command when the mode or setpoint would actually change, so devices are not re-commanded every minute.
 
+#### Waiting for the low
+
+A device works hardest right after its target goes up, while it closes the gap. When the target simply follows a falling price, every step down in price lifts the target a little, so the bulk of the reheating and charging is bought on the way down, an hour or two before the cheapest point arrives.
+
+Set **Near-Term Average Price Sensor** and the automation asks one more question: is the next hour or two still cheaper than now? While it is, the signal is pulled toward the **Hold While Falling** point and the target stays down. Once the price has bottomed out the hold lets go and the target rises in one move, so the energy is bought at the low:
+
+```
+heating, comfort 21.0 C, charge 23.5 C, coast 19.0 C, full demand,
+Price Next 2h as the near-term sensor, Falling Price Margin 0.10
+
+                          ------------- target --------------
+  time   now    next 2h   no hold    hold at comfort   hold at coast
+  09:00  0.320  0.275     19.5 C     19.5 C            19.0 C
+  10:00  0.280  0.238     20.0 C     20.0 C            19.0 C
+  11:00  0.240  0.211     21.5 C     21.0 C            19.0 C
+  11:30  0.225  0.203     22.5 C     21.0 C            19.0 C
+  12:00  0.210  0.199     23.5 C     22.0 C            21.0 C
+  12:30  0.203  0.201     23.5 C     23.5 C            23.0 C
+  13:00  0.195  0.208     23.5 C     23.5 C            23.5 C   <- the low
+```
+
+Without the hold, the house is heated from 19 to 23.5 C while the price slides from 0.32 to 0.21. Holding at comfort (`0`) only postpones the extra charge above 21 C; holding at coast (`1`, the default) postpones the reheat as well, which is where most of the energy goes. The hold never reaches further than Coast, so the comfort you give up is the same you already accept during expensive hours, only for longer.
+
+**Falling Price Margin** sets how steep the remaining drop must be before the hold is complete; a slow slide of a few percent only holds partway, so a long, gently falling cheap night still charges. Keep the near-term window short: 1–2 h asks "is it still going down", while the Forward Average Price Sensor's longer window asks "is this cheap compared with what is coming".
+
 #### Behaviour when a sensor drops out
 
 - **Price sensor** unavailable → treated as fully expensive, so the target sits at *coast*. A failed sensor never causes spending.
 - **Forward average price sensor** unavailable, unset, or reporting zero → the forward half is dropped and the signal falls back to the absolute thresholds alone.
+- **Near-term average price sensor** unavailable, unset, or reporting zero → no hold; the target follows the price signal straight away.
 - **Forward outdoor mean helper** unset, or the weather entity returns no usable hourly forecast → the demand factor is 1, so charge depth is unscaled. The helper is simply not written rather than being filled with a wrong value.
 - **Outdoor sensor** unavailable → the live outdoor override is skipped rather than guessed.
 - **Indoor sensors** all unavailable, or none configured → the room check disables itself and the devices' own thermostats decide.
@@ -164,7 +195,7 @@ The automation only sends a command when the mode or setpoint would actually cha
 
 Before letting it run unattended:
 
-- Trigger the automation manually and check its **trace** — confirm `day_type`, `price_signal_absolute`, `price_signal_forward`, `price_signal`, `demand_factor`, `effective_charge`, `target_temp`, `indoor_temp`, `indoor_satisfied` and `should_be_off` compute the values you expect for today's actual forecast, price, and temperatures.
+- Trigger the automation manually and check its **trace** — confirm `day_type`, `price_signal_absolute`, `price_signal_forward`, `price_falling`, `price_signal`, `demand_factor`, `effective_charge`, `target_temp`, `indoor_temp`, `indoor_satisfied` and `should_be_off` compute the values you expect for today's actual forecast, price, and temperatures.
 - Confirm `weather.get_forecasts` with `type: hourly` returns entries with a `temperature` field (**Developer Tools → Actions**), then check the Forward Outdoor Mean helper gets a sensible number within 15 minutes.
 - Confirm your climate entities support `hvac_mode: "off"` (check the `hvac_modes` attribute in **Developer Tools → States**); some devices require `climate.turn_off` instead.
 - Confirm your weather entity's `weather.get_forecasts` response actually contains `temperature` and `templow` fields for the first forecast entry (test it directly in **Developer Tools → Actions**).
