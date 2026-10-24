@@ -1,0 +1,13 @@
+{
+  "name": "adaptive-climate-setpoint-simulator",
+  "private": true,
+  "type": "module",
+  "description": "Day simulator and apartment model for the Adaptive Climate Setpoint blueprint.",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test/run.mjs && python3 test/blueprint_parity.py"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}
