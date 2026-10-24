@@ -1,0 +1,3669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Climate Setpoint Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Replay a day of electricity prices and outdoor temperatures through the Adaptive Climate Setpoint blueprint, for one room or a whole apartment trained on Home Assistant data.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a tuning bench - parameter rail on the left, three stacked time-of-day charts on one shared clock on the right. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #fcfcfd;
+  --ink: #10161d;
+  --ink-2: #4b5560;
+  --muted: #7b8591;
+  --line: #e1e5ea;
+  --axis: #c3c9d0;
+  --wash: #e9eef4;
+  --accent: #1f66bd;
+  --accent-ink: #ffffff;
+  --good: #006300;
+  --bad: #c23434;
+  --s-target: #2a78d6;
+  --s-room: #eb6834;
+  --s-outdoor: #1baf7a;
+  --s-price: #6250d6;
+  --s-near: #eda100;
+  --s-forward: #52514e;
+  --s-base: #898781;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1215; --surface: #181b1f; --ink: #eef1f4; --ink-2: #b8c0c9; --muted: #8a929b;
+    --line: #2a2e34; --axis: #3b4047; --wash: #20252b; --accent: #4a8fe0; --accent-ink: #0b0f14;
+    --good: #0ca30c; --bad: #e66767;
+    --s-target: #3987e5; --s-room: #d95926; --s-outdoor: #199e70; --s-price: #9085e9;
+    --s-near: #c98500; --s-forward: #c3c2b7; --s-base: #898781;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1215; --surface: #181b1f; --ink: #eef1f4; --ink-2: #b8c0c9; --muted: #8a929b;
+  --line: #2a2e34; --axis: #3b4047; --wash: #20252b; --accent: #4a8fe0; --accent-ink: #0b0f14;
+  --good: #0ca30c; --bad: #e66767;
+  --s-target: #3987e5; --s-room: #d95926; --s-outdoor: #199e70; --s-price: #9085e9;
+  --s-near: #c98500; --s-forward: #c3c2b7; --s-base: #898781;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.45 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 15px; font-weight: 600; }
+.lede { color: var(--ink-2); max-width: 68ch; margin: 4px 0 0; }
+.masthead { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; max-width: 1400px; margin: 0 auto 18px; }
+.masthead .tag { font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+.bench { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 18px; max-width: 1400px; margin: 0 auto; align-items: start; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); } .rail { order: 2; } .stage { order: 1; } }
+
+/* parameter rail */
+.rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.group > summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 600 14px/1.2 var(--f-display); }
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); margin-top: -3px; transition: transform .15s; }
+.group[open] > summary::after { transform: rotate(-135deg); margin-top: 3px; }
+.group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r); }
+.group .body { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.hint { color: var(--muted); font-size: 12px; margin: 0; }
+.hint code, .note code { font-family: var(--f-mono); font-size: 11.5px; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
+.field > label, .field > .lbl { font-size: 13px; color: var(--ink); }
+.field.stack { grid-template-columns: minmax(0, 1fr); }
+.field.stack select { width: 100%; font-family: var(--f-body); }
+.field .sub { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); margin-top: -2px; }
+.field.off > label, .field.off .num { opacity: .45; }
+.num { display: inline-flex; align-items: center; gap: 4px; }
+.num input { width: 76px; }
+.unit { font: 12px var(--f-mono); color: var(--muted); min-width: 34px; }
+input[type="number"], input[type="time"], select, textarea {
+  font: 13px var(--f-mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--axis); border-radius: 4px; padding: 4px 6px;
+}
+textarea { width: 100%; min-height: 90px; resize: vertical; font-size: 12px; }
+select { max-width: 100%; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.slider { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 56px; gap: 8px; align-items: center; }
+.slider output { font: 12px var(--f-mono); text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.axis-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 10px; align-items: center; }
+.axis-grid .h { font: 500 11px var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.axis-grid input { width: 100%; min-width: 0; }
+.sep { height: 1px; background: var(--line); margin: 2px 0; }
+.toggle { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.btn { font: 500 13px var(--f-body); border-radius: 4px; padding: 6px 10px; cursor: pointer; border: 1px solid var(--axis); background: var(--surface); color: var(--ink); }
+.btn:hover { background: var(--wash); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.notice { font-size: 12px; color: var(--ink-2); background: var(--wash); border-radius: 4px; padding: 6px 8px; margin: 0; }
+.notice.err { color: var(--bad); }
+
+/* stage */
+.stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; position: relative; }
+.compare { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+.compare .what { font-size: 13px; color: var(--ink-2); }
+.compare .what b { color: var(--ink); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--ink-2); }
+.tile .v { font: 600 24px/1.15 var(--f-body); letter-spacing: -0.01em; }
+.tile .v small { font: 500 13px var(--f-body); color: var(--ink-2); margin-left: 3px; }
+.tile .d { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .d .up, .tile .d .down { font-weight: 600; }
+.d .better { color: var(--good); } .d .worse { color: var(--bad); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px 6px; position: relative; min-width: 0; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; margin-bottom: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid currentColor; }
+.legend i.thin { border-top-width: 1.5px; }
+.legend i.box { height: 10px; width: 12px; border: 0; border-radius: 2px; background: currentColor; }
+.legend i.box.fade { opacity: .3; }
+.legend i.fade { opacity: .5; }
+svg.chart { display: block; width: 100%; overflow: visible; touch-action: pan-y; }
+svg.chart text { font: 11px var(--f-mono); fill: var(--muted); }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .base { stroke: var(--axis); stroke-width: 1; }
+svg.chart .ref { stroke: var(--axis); stroke-width: 1; }
+svg.chart .night { fill: var(--wash); }
+svg.chart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg.chart .ln.thin { stroke-width: 1.5; }
+svg.chart .cross { stroke: var(--ink-2); stroke-width: 1; }
+svg.chart .dot { stroke: var(--surface); stroke-width: 2; }
+svg.chart .strip-lbl { font: 10px var(--f-mono); fill: var(--muted); }
+.c-target { stroke: var(--s-target); color: var(--s-target); fill: var(--s-target); }
+.c-room { stroke: var(--s-room); color: var(--s-room); fill: var(--s-room); }
+.c-outdoor { stroke: var(--s-outdoor); color: var(--s-outdoor); fill: var(--s-outdoor); }
+.c-price { stroke: var(--s-price); color: var(--s-price); fill: var(--s-price); }
+.c-near { stroke: var(--s-near); color: var(--s-near); fill: var(--s-near); }
+.c-forward { stroke: var(--s-forward); color: var(--s-forward); fill: var(--s-forward); }
+.c-base { stroke: var(--s-base); color: var(--s-base); fill: var(--s-base); }
+svg .ln.c-target, svg .ln.c-room, svg .ln.c-outdoor, svg .ln.c-price, svg .ln.c-near, svg .ln.c-forward, svg .ln.c-base { fill: none; }
+svg .measured { opacity: .5; }
+svg .area { stroke: none; opacity: .12; }
+svg .hold { fill: var(--s-price); }
+
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--axis); border-radius: var(--r); padding: 8px 10px; font-size: 12px; min-width: 210px; max-width: 280px; box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+.tip .t { font: 600 13px var(--f-mono); margin-bottom: 4px; }
+.tip .r { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; align-items: center; line-height: 1.5; }
+.tip .r i { width: 12px; height: 0; border-top: 2px solid currentColor; }
+.tip .r .l { color: var(--muted); }
+.tip .r b { font: 500 12px var(--f-mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.tip .why { color: var(--ink-2); margin-top: 4px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.panel > summary { cursor: pointer; padding: 10px 12px; font: 600 14px var(--f-display); }
+.panel .body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+pre.yaml { margin: 0; font: 12px/1.5 var(--f-mono); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 10px; overflow-x: auto; user-select: all; }
+.tablewrap { overflow-x: auto; max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; font: 12px var(--f-mono); font-variant-numeric: tabular-nums; width: 100%; }
+th, td { padding: 4px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th { position: sticky; top: 0; background: var(--surface); color: var(--ink-2); font-weight: 500; }
+td:first-child, th:first-child { text-align: left; }
+.note { color: var(--muted); font-size: 12px; max-width: 80ch; margin: 0; }
+/* modes and unit tabs */
+.modes, .unit-tabs { display: inline-flex; border: 1px solid var(--axis); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.modes button, .unit-tabs button { font: 500 13px var(--f-body); color: var(--ink-2); background: transparent; border: 0; padding: 7px 12px; cursor: pointer; }
+.modes button + button, .unit-tabs button + button { border-left: 1px solid var(--axis); }
+.modes button[aria-selected="true"], .unit-tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.modes button:focus-visible, .unit-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.unit-tabs { display: flex; width: 100%; }
+.unit-tabs button { flex: 1 1 0; min-width: 0; padding: 7px 6px; }
+.unit-pick { display: flex; flex-direction: column; gap: 6px; }
+.unit-pick .lbl { font: 600 14px var(--f-display); }
+.progress { height: 6px; background: var(--wash); border-radius: 3px; overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+ul.warn { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.zones { display: flex; flex-direction: column; gap: 12px; }
+.card.check { padding-top: 8px; }
+#f-model-json { min-height: 60px; }
+details.roles > summary { cursor: pointer; font-size: 13px; color: var(--ink-2); padding: 2px 0; }
+details.roles .body-inner { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+#f-report table td:nth-child(2) { font-size: 11px; color: var(--ink-2); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div>
+    <div class="tag">Adaptive Climate Setpoint · day simulator</div>
+    <h1>Climate Setpoint Simulator</h1>
+    <p class="lede">Replay a day of electricity prices and outdoor temperatures through the blueprint's logic, then move the parameters and watch where the target temperature, the rooms and the power draw go.</p>
+  </div>
+  <div class="modes" role="tablist" aria-label="What to simulate">
+    <button type="button" role="tab" id="mode-room">One room</button>
+    <button type="button" role="tab" id="mode-flat">Whole apartment</button>
+  </div>
+</header>
+
+<main class="bench">
+  <aside class="rail" id="rail">
+    <div id="rail-room" style="display:flex;flex-direction:column;gap:10px">
+    <details class="group" open id="g-data">
+      <summary>Day</summary>
+      <div class="body">
+        <div class="field stack">
+          <label for="source">Data</label>
+          <select id="source"></select>
+        </div>
+        <div class="field" id="dayfield">
+          <label for="day">Day</label>
+          <select id="day"></select>
+        </div>
+        <p class="notice" id="datainfo"></p>
+        <div class="row">
+          <label class="btn" for="file">Load Home Assistant history…</label>
+          <input type="file" id="file" accept=".csv,.json,.txt,text/csv,application/json" hidden>
+        </div>
+        <p class="hint">In Home Assistant open <b>History</b>, add the price sensor, the outdoor sensor and optionally a room sensor, pick the day plus the following morning, then <b>⋮ → Download data</b>. CSV and the REST <code>/api/history</code> JSON both work.</p>
+        <details>
+          <summary class="hint" style="cursor:pointer">Paste data instead</summary>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            <textarea id="paste" placeholder="entity_id,state,last_changed&#10;sensor.price,0.284,2026-10-21T00:00:00.000Z&#10;…"></textarea>
+            <div class="row"><button class="btn" id="usepaste" type="button">Use pasted data</button></div>
+          </div>
+        </details>
+        <div id="mapping" hidden style="display:flex;flex-direction:column;gap:8px">
+          <div class="sep"></div>
+          <div class="field stack"><label for="map-price">Price</label><select id="map-price"></select></div>
+          <div class="field stack"><label for="map-outdoor">Outdoor temperature</label><select id="map-outdoor"></select></div>
+          <div class="field stack"><label for="map-indoor">Room temperature (for comparison)</label><select id="map-indoor"></select></div>
+        </div>
+      </div>
+    </details>
+    </div>
+    <div id="rail-flat" hidden style="display:flex;flex-direction:column;gap:10px">
+      <details class="group" open id="g-model">
+        <summary>Apartment model</summary>
+        <div class="body">
+          <p class="notice" id="f-modelinfo"></p>
+          <div class="row">
+            <label class="btn" for="f-file">Load apartment export…</label>
+            <input type="file" id="f-file" accept=".json,application/json" hidden>
+          </div>
+          <p class="hint">Made by <code>tools/ha_export_snippet.js</code>: open Home Assistant in a desktop browser, press F12, paste the snippet into the console and press Enter. It saves <code>apartment-export.json</code>.</p>
+          <div id="f-mapping" hidden style="display:flex;flex-direction:column;gap:8px"></div>
+          <div class="row"><button class="btn primary" type="button" id="f-train" hidden>Train the model on this data</button></div>
+          <div class="progress" id="f-progress" hidden><div></div></div>
+          <p class="notice" id="f-trainmsg" hidden role="status"></p>
+        </div>
+      </details>
+      <details class="group" open id="g-fday">
+        <summary>Day</summary>
+        <div class="body">
+          <div class="field stack"><label for="f-day">Day</label><select id="f-day"></select></div>
+          <div class="field stack"><label for="f-base">Grey lines show</label>
+            <select id="f-base">
+              <option value="recorded">What the units really did</option>
+              <option value="holdoff">Same settings, falling-price hold off</option>
+              <option value="pinned">Pinned settings</option>
+            </select>
+          </div>
+          <p class="notice" id="f-dayinfo"></p>
+        </div>
+      </details>
+      <details class="group" id="g-fheater">
+        <summary>Bath heater</summary>
+        <div class="body">
+          <div class="field stack"><label for="f-heater">The heater</label>
+            <select id="f-heater">
+              <option value="recorded">Runs as it did that day</option>
+              <option value="off">Stays off</option>
+              <option value="thermostat">Follows a thermostat</option>
+            </select>
+          </div>
+          <div id="f-heater-thermo" style="display:flex;flex-direction:column;gap:8px">
+            <div class="field"><label for="f-heater-set">Setpoint</label><span class="num"><input type="number" id="f-heater-set" step="0.5" min="10" max="30"><span class="unit">°C</span></span></div>
+            <div class="field stack"><label for="f-heater-win">Between</label><input type="text" id="f-heater-win" style="font:13px var(--f-mono);padding:4px 6px;border:1px solid var(--axis);border-radius:4px;background:var(--bg);color:var(--ink)"></div>
+            <p class="hint">Times as 06:00-07:30, 19:00-21:30.</p>
+          </div>
+        </div>
+      </details>
+      <div class="unit-pick">
+        <span class="lbl" id="f-units-lbl">Settings for</span>
+        <div class="unit-tabs" role="tablist" aria-labelledby="f-units-lbl" id="f-units"></div>
+        <div class="row"><button class="btn" type="button" id="f-copyall">Copy to the other units, keeping their temperatures</button></div>
+      </div>
+    </div>
+    <form id="params" autocomplete="off" style="display:flex;flex-direction:column;gap:10px"></form>
+    <div class="row"><button class="btn" type="button" id="reset">Reset to blueprint defaults</button></div>
+  </aside>
+
+  <section class="stage" id="stage">
+    <div id="stage-room" style="display:flex;flex-direction:column;gap:12px">
+    <div class="compare">
+      <div class="what" id="basewhat"></div>
+      <div class="row">
+        <button class="btn" type="button" id="pin">Pin current settings as baseline</button>
+        <button class="btn" type="button" id="unpin">Baseline: hold off</button>
+      </div>
+    </div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="card" id="card-temp" tabindex="0" aria-label="Target and room temperature over the day">
+      <div class="card-head">
+        <h2>Target and room temperature</h2>
+        <div class="legend" id="leg-temp"></div>
+      </div>
+      <svg class="chart" id="ch-temp" role="img" aria-label="Target and room temperature"></svg>
+    </div>
+    <div class="card" id="card-outdoor" tabindex="0" aria-label="Outdoor temperature over the day">
+      <div class="card-head">
+        <h2>Outdoor temperature</h2>
+      </div>
+      <svg class="chart" id="ch-outdoor" role="img" aria-label="Outdoor temperature"></svg>
+    </div>
+    <div class="card" id="card-price" tabindex="0" aria-label="Electricity price over the day">
+      <div class="card-head">
+        <h2>Electricity price</h2>
+        <div class="legend" id="leg-price"></div>
+      </div>
+      <svg class="chart" id="ch-price" role="img" aria-label="Price, forward and near-term averages"></svg>
+    </div>
+    <div class="card" id="card-power" tabindex="0" aria-label="Estimated power draw over the day">
+      <div class="card-head">
+        <h2>Estimated power draw</h2>
+        <div class="legend" id="leg-power"></div>
+      </div>
+      <svg class="chart" id="ch-power" role="img" aria-label="Electric power per 15 minutes"></svg>
+    </div>
+
+    <details class="panel" id="p-yaml">
+      <summary>Blueprint inputs</summary>
+      <div class="body">
+        <p class="hint">The current settings as blueprint inputs. Paste them under <code>use_blueprint: input:</code> in the automation's YAML, or copy the values into the editor by hand.</p>
+        <pre class="yaml" id="yaml"></pre>
+        <div class="row"><button class="btn" type="button" id="copy">Copy</button><span class="hint" id="copied" role="status"></span></div>
+      </div>
+    </details>
+    <details class="panel" id="p-table">
+      <summary>Table, every 15 minutes</summary>
+      <div class="body"><div class="tablewrap"><table id="table"></table></div></div>
+    </details>
+    <p class="note" id="approx">How close this is: the price windows are computed from the price curve the way tibber_prices builds its <code>⌀ Price Next Nh</code> sensors (from the next interval on). The day's forecast high and low are taken from the measured outdoor curve, and so is the hourly forecast behind the demand factor. Windows, presence, weekdays and manual overrides are not simulated. The room is a single-node model; it is good for comparing two parameter sets on the same day, not for predicting your bill. Calibrate it by loading a measured room temperature and adjusting <b>Room model</b> until the curves match.</p>
+    </div>
+    <div id="stage-flat" hidden style="display:flex;flex-direction:column;gap:12px">
+      <div class="compare">
+        <div class="what" id="f-basewhat"></div>
+        <div class="row">
+          <button class="btn" type="button" id="f-pin">Pin current settings as baseline</button>
+          <button class="btn" type="button" id="f-unpin">Forget pinned settings</button>
+        </div>
+      </div>
+      <div class="tiles" id="f-tiles"></div>
+      <div class="zones" id="f-zones"></div>
+      <div class="card" id="f-card-outdoor" tabindex="0" aria-label="Outdoor temperature over the day">
+        <div class="card-head"><h2>Outdoor temperature</h2></div>
+        <svg class="chart" id="f-ch-outdoor" role="img" aria-label="Outdoor temperature"></svg>
+      </div>
+      <div class="card" id="f-card-price" tabindex="0" aria-label="Electricity price over the day">
+        <div class="card-head"><h2>Electricity price</h2><div class="legend" id="f-leg-price"></div></div>
+        <svg class="chart" id="f-ch-price" role="img" aria-label="Price, forward and near-term averages"></svg>
+      </div>
+      <div class="card" id="f-card-power" tabindex="0" aria-label="Electricity the units use over the day">
+        <div class="card-head"><h2>Electricity for the three units</h2><div class="legend" id="f-leg-power"></div></div>
+        <svg class="chart" id="f-ch-power" role="img" aria-label="Electric power per 15 minutes"></svg>
+      </div>
+      <details class="panel" id="f-p-model">
+        <summary>The model and how well it predicts</summary>
+        <div class="body" id="f-report"></div>
+      </details>
+      <details class="panel" id="f-p-yaml">
+        <summary>Blueprint inputs for all three units</summary>
+        <div class="body">
+          <p class="hint">One block per automation. Paste each under <code>use_blueprint: input:</code> of that unit's automation, or copy the values into the editor by hand.</p>
+          <pre class="yaml" id="f-yaml"></pre>
+          <div class="row"><button class="btn" type="button" id="f-copy">Copy</button><span class="hint" id="f-copied" role="status"></span></div>
+        </div>
+      </details>
+      <p class="note">How close this is: the model was fitted to what your thermometers did when the units, the heater, the windows, the sun and the weather did what they did, and it was checked on days it had not seen. It knows nothing about people, cooking or doors you opened that have no sensor, so a single day can be off by a few tenths of a degree. Use it to compare settings on the same day; the absolute kWh lean on the heat pump's efficiency, which the phase reading can only roughly pin down.</p>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  // ui/util.js
+  var HOUR = 36e5;
+  var MIN = 6e4;
+  var $ = (id) => document.getElementById(id);
+  var fmt = (v, d) => v === null || v === void 0 || !isFinite(v) ? "\u2013" : (Math.abs(v) < 0.5 * Math.pow(10, -d) ? 0 : v).toFixed(d);
+  var hhmm = (t) => {
+    const d = new Date(t);
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  };
+  var dayStart = (t) => {
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  var dayLabel = (t) => new Date(t).toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" });
+  var store = {
+    get(k) {
+      try {
+        const v = localStorage.getItem(k);
+        return v ? JSON.parse(v) : null;
+      } catch (e) {
+        return null;
+      }
+    },
+    set(k, v) {
+      try {
+        if (v === null) localStorage.removeItem(k);
+        else localStorage.setItem(k, JSON.stringify(v));
+      } catch (e) {
+      }
+    }
+  };
+  function h(tag, props, ...kids) {
+    const e = document.createElement(tag);
+    for (const k in props || {}) {
+      const v = props[k];
+      if (v === null || v === void 0 || v === false) continue;
+      if (k === "class") e.className = v;
+      else if (k === "text") e.textContent = v;
+      else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+      else if (k in e && typeof v !== "string") e[k] = v;
+      else e.setAttribute(k, v);
+    }
+    for (const c of kids.flat()) if (c !== null && c !== void 0 && c !== false) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return e;
+  }
+  function tile(k, v, unit, lines) {
+    return h(
+      "div",
+      { class: "tile" },
+      h("div", { class: "k", text: k }),
+      h("div", { class: "v" }, v, unit ? h("small", { text: unit }) : null),
+      lines.map((l) => h("div", { class: "d" }, ...l))
+    );
+  }
+  function delta(cur, base, digits, unit, lowerIsBetter) {
+    const s = h("span");
+    if (cur === null || base === null || !isFinite(cur) || !isFinite(base)) return s;
+    const diff = cur - base;
+    if (Math.abs(diff) < Math.pow(10, -digits) / 2) {
+      s.textContent = "no change";
+      return s;
+    }
+    s.className = (lowerIsBetter ? diff < 0 : diff > 0) ? "better" : "worse";
+    const pct = base !== 0 ? " (" + (diff > 0 ? "+" : "\u2212") + Math.abs(diff / base * 100).toFixed(1) + " %)" : "";
+    s.textContent = (diff > 0 ? "\u25B2 +" : "\u25BC \u2212") + Math.abs(diff).toFixed(digits) + unit + pct;
+    return s;
+  }
+  function copyText(text2, selectEl, status) {
+    const sel = () => {
+      const r = document.createRange();
+      r.selectNodeContents(selectEl);
+      const s = getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      status.textContent = "Selected. Press Ctrl+C or \u2318C to copy.";
+    };
+    try {
+      navigator.clipboard.writeText(text2).then(() => {
+        status.textContent = "Copied.";
+      }, sel);
+    } catch (e) {
+      sel();
+    }
+  }
+  function readFile(file, cb, err) {
+    const rd = new FileReader();
+    rd.onload = () => cb(String(rd.result));
+    rd.onerror = () => err("Could not read that file.");
+    rd.readAsText(file);
+  }
+
+  // ui/form.js
+  var AXIS = [["charge", "Charge"], ["comfort", "Comfort"], ["coast", "Coast"]];
+  var SCHEMA = [
+    { group: "Comfort axis", open: true, items: [{ type: "axis" }] },
+    { group: "Price", open: true, items: [
+      { key: "price_cheap", label: "Cheap price", unit: "\u20AC/kWh", step: 0.01, min: 0, max: 5, sub: "At or below this, power counts as fully cheap." },
+      { key: "price_expensive", label: "Expensive price", unit: "\u20AC/kWh", step: 0.01, min: 0, max: 5 },
+      { type: "sep" },
+      { key: "use_forward", label: "Forward Average Price Sensor", type: "check" },
+      { key: "forward_hours", label: "Its window", unit: "h", step: 1, min: 1, max: 12, dep: "use_forward", sub: "Which \u2300 Price Next Nh sensor it is." },
+      { key: "price_lookahead_margin", label: "Forward Price Margin", type: "range", step: 0.01, min: 0.02, max: 1, dep: "use_forward" },
+      { type: "sep" },
+      { key: "use_near", label: "Near-Term Average Price Sensor", type: "check" },
+      { key: "near_hours", label: "Its window", unit: "h", step: 1, min: 1, max: 4, dep: "use_near", sub: "Price Next 1h or 2h; short, so it asks whether the price is still going down." },
+      { key: "price_falling_margin", label: "Falling Price Margin", type: "range", step: 0.01, min: 0.02, max: 0.5, dep: "use_near" },
+      { key: "price_falling_hold", label: "Hold While Falling", type: "range", step: 0.1, min: 0, max: 1, dep: "use_near", sub: "0 waits at comfort, 1 waits at coast." }
+    ] },
+    { group: "Demand", items: [
+      { key: "use_demand", label: "Forward Outdoor Mean helper", type: "check" },
+      { key: "demand_lookahead_hours", label: "Demand Lookahead", unit: "h", step: 1, min: 1, max: 24, dep: "use_demand" },
+      { key: "demand_cold_ref", label: "Full Heating Demand Below", unit: "\xB0C", step: 1, min: -25, max: 20, dep: "use_demand" },
+      { key: "demand_hot_ref", label: "Full Cooling Demand Above", unit: "\xB0C", step: 1, min: 20, max: 45, dep: "use_demand" }
+    ] },
+    { group: "Day type & schedule", items: [
+      { key: "cool_day_threshold", label: "Cooling Day Threshold", unit: "\xB0C", step: 0.5, min: 10, max: 35 },
+      { key: "heat_day_threshold", label: "Heating Day Threshold", unit: "\xB0C", step: 0.5, min: 0, max: 30 },
+      { key: "heating_reference", label: "Heating Day Reference", type: "select", options: [["average", "Average"], ["low", "Forecast low"], ["high", "Forecast high"]] },
+      { key: "forecast_high", label: "Forecast high", unit: "\xB0C", step: 0.5, min: -40, max: 50, blank: true, sub: "Empty takes the day's measured maximum." },
+      { key: "forecast_low", label: "Forecast low", unit: "\xB0C", step: 0.5, min: -40, max: 50, blank: true },
+      { type: "sep" },
+      { key: "night_start", label: "Night Mode Start", type: "time" },
+      { key: "night_end", label: "Night Mode End", type: "time" },
+      { key: "storage_overrides_schedule", label: "Charge Outside Normal Hours", type: "check" }
+    ] },
+    { group: "Rooms & timing", items: [
+      { key: "use_indoor", label: "Indoor Temperature Sensors", type: "check", sub: "Gates the device on the simulated room temperature." },
+      { key: "indoor_deadband", label: "Indoor Deadband", unit: "K", step: 0.1, min: 0.2, max: 5, dep: "use_indoor" },
+      { key: "use_windows", label: "Door/Window Sensors", type: "check", mode: "flat", sub: "An open balcony door or window switches the unit off." },
+      { key: "min_running_minutes", label: "Minimum Running Time", unit: "min", step: 1, min: 0, max: 30 },
+      { key: "min_idle_minutes", label: "Minimum Idle Time", unit: "min", step: 1, min: 0, max: 30 }
+    ] },
+    { group: "Room model", mode: "room", items: [
+      { type: "hint", text: "Not blueprint inputs. A rough stand-in for your building, used to estimate when energy is bought." },
+      { key: "model_loss_w_per_k", label: "Heat loss", unit: "W/K", step: 10, min: 10, max: 1e3, sub: "Heat flow per kelvin between room and outside." },
+      { key: "model_capacity_kwh_per_k", label: "Heat capacity", unit: "kWh/K", step: 0.5, min: 0.5, max: 50, sub: "Energy to warm the zone by one kelvin." },
+      { key: "model_max_kw", label: "Max output", unit: "kW", step: 0.1, min: 0.5, max: 20, sub: "Heating or cooling output at full speed." },
+      { key: "model_cop", label: "COP at 21 \xB0C in / 7 \xB0C out", unit: "", step: 0.1, min: 1, max: 7, sub: "Falls as the gap between inside and outside grows." },
+      { key: "model_start_temp", label: "Room at 00:00", unit: "\xB0C", step: 0.5, min: 5, max: 35, blank: true, sub: "Empty uses the measured room temperature, else heating comfort." }
+    ] }
+  ];
+  var BLANK = /* @__PURE__ */ new Set(["forecast_high", "forecast_low", "model_start_temp"]);
+  function buildForm(form2) {
+    form2.textContent = "";
+    for (const g of SCHEMA) {
+      const det = document.createElement("details");
+      det.className = "group";
+      det.open = !!g.open;
+      if (g.mode) det.dataset.mode = g.mode;
+      const sum = document.createElement("summary");
+      sum.textContent = g.group;
+      det.appendChild(sum);
+      const body = document.createElement("div");
+      body.className = "body";
+      det.appendChild(body);
+      for (const it of g.items) body.appendChild(control(it));
+      form2.appendChild(det);
+    }
+  }
+  function control(it) {
+    if (it.type === "sep") {
+      const d = document.createElement("div");
+      d.className = "sep";
+      return d;
+    }
+    if (it.type === "hint") {
+      const p = document.createElement("p");
+      p.className = "hint";
+      p.textContent = it.text;
+      return p;
+    }
+    if (it.type === "axis") {
+      const g = document.createElement("div");
+      g.className = "axis-grid";
+      const cell = (t, cls) => {
+        const s = document.createElement("span");
+        s.className = cls || "";
+        s.textContent = t;
+        g.appendChild(s);
+      };
+      cell("", "h");
+      cell("Heating", "h");
+      cell("Cooling", "h");
+      for (const [k, name] of AXIS) {
+        cell(name);
+        for (const mode2 of ["heat", "cool"]) {
+          const inp = document.createElement("input");
+          inp.type = "number";
+          inp.step = "0.5";
+          inp.min = "12";
+          inp.max = "32";
+          inp.id = "p-" + mode2 + "_" + k;
+          inp.dataset.key = mode2 + "_" + k;
+          inp.setAttribute("aria-label", (mode2 === "heat" ? "Heating " : "Cooling ") + name + " in \xB0C");
+          g.appendChild(inp);
+        }
+      }
+      const wrap = document.createElement("div");
+      wrap.appendChild(g);
+      const p = document.createElement("p");
+      p.className = "hint";
+      p.style.marginTop = "6px";
+      p.textContent = "Comfort at a neutral price, charge while power is cheap, coast while it is dear (\xB0C).";
+      wrap.appendChild(p);
+      return wrap;
+    }
+    const f = document.createElement("div");
+    f.className = "field";
+    f.dataset.dep = it.dep || "";
+    if (it.mode) f.dataset.mode = it.mode;
+    const id = "p-" + it.key;
+    if (it.type === "check") {
+      const l = document.createElement("label");
+      l.className = "toggle";
+      l.htmlFor = id;
+      const c = document.createElement("input");
+      c.type = "checkbox";
+      c.id = id;
+      c.dataset.key = it.key;
+      l.appendChild(c);
+      l.appendChild(document.createTextNode(it.label));
+      f.appendChild(l);
+    } else {
+      const l = document.createElement("label");
+      l.htmlFor = id;
+      l.textContent = it.label;
+      f.appendChild(l);
+      if (it.type === "range") {
+        const out = document.createElement("output");
+        out.id = id + "-o";
+        out.htmlFor = id;
+        f.appendChild(document.createElement("span"));
+        const s = document.createElement("div");
+        s.className = "slider";
+        const r = document.createElement("input");
+        r.type = "range";
+        r.id = id;
+        r.dataset.key = it.key;
+        r.min = it.min;
+        r.max = it.max;
+        r.step = it.step;
+        s.appendChild(r);
+        s.appendChild(out);
+        f.appendChild(s);
+      } else if (it.type === "select") {
+        const sel = document.createElement("select");
+        sel.id = id;
+        sel.dataset.key = it.key;
+        for (const [v, t] of it.options) {
+          const o = document.createElement("option");
+          o.value = v;
+          o.textContent = t;
+          sel.appendChild(o);
+        }
+        f.appendChild(sel);
+      } else {
+        const n = document.createElement("span");
+        n.className = "num";
+        const i = document.createElement("input");
+        i.id = id;
+        i.dataset.key = it.key;
+        i.type = it.type === "time" ? "time" : "number";
+        if (i.type === "number") {
+          i.step = it.step;
+          i.min = it.min;
+          i.max = it.max;
+          if (it.blank) i.placeholder = "auto";
+        }
+        n.appendChild(i);
+        if (it.type !== "time") {
+          const u = document.createElement("span");
+          u.className = "unit";
+          u.textContent = it.unit || "";
+          n.appendChild(u);
+        }
+        f.appendChild(n);
+      }
+    }
+    if (it.sub) {
+      const s = document.createElement("div");
+      s.className = "sub";
+      s.textContent = it.sub;
+      f.appendChild(s);
+    }
+    return f;
+  }
+  function writeForm(form2, P) {
+    for (const el of form2.querySelectorAll("[data-key]")) {
+      const k = el.dataset.key, v = P[k];
+      if (el.type === "checkbox") el.checked = !!v;
+      else el.value = v === null || v === void 0 ? "" : v;
+      const o = $(el.id + "-o");
+      if (o) o.textContent = Number(v).toFixed(2);
+    }
+    syncDeps(form2, P);
+  }
+  function readForm(form2, P) {
+    for (const el of form2.querySelectorAll("[data-key]")) {
+      const k = el.dataset.key;
+      if (el.type === "checkbox") P[k] = el.checked;
+      else if (el.type === "number" || el.type === "range") {
+        if (el.value === "" && BLANK.has(k)) P[k] = null;
+        else if (el.value !== "" && isFinite(+el.value)) P[k] = +el.value;
+      } else P[k] = el.value;
+      const o = $(el.id + "-o");
+      if (o) o.textContent = Number(P[k]).toFixed(2);
+    }
+    syncDeps(form2, P);
+  }
+  function syncDeps(form2, P) {
+    for (const f of form2.querySelectorAll(".field[data-dep]")) {
+      const dep = f.dataset.dep;
+      if (!dep) continue;
+      const on = !!P[dep];
+      f.classList.toggle("off", !on);
+      for (const i of f.querySelectorAll("input,select")) i.disabled = !on;
+    }
+  }
+  function showMode(form2, mode2) {
+    for (const e of form2.querySelectorAll("[data-mode]")) e.hidden = e.dataset.mode !== mode2;
+  }
+  function yamlFor(P, scale, title) {
+    const n = (v) => +(+v).toFixed(4), sc = scale === 100 ? 100 : 1;
+    const L = [title ? "# " + title : "# Adaptive Climate Setpoint inputs, from the simulator"];
+    for (const m of ["heat", "cool"]) for (const [k] of AXIS) L.push(m + "_" + k + ": " + n(P[m + "_" + k]));
+    L.push("price_cheap: " + n(P.price_cheap * sc) + (sc === 100 ? "   # ct/kWh, like your sensor" : ""));
+    L.push("price_expensive: " + n(P.price_expensive * sc));
+    if (P.use_forward) {
+      L.push("price_forecast_sensor: sensor.REPLACE_price_next_" + P.forward_hours + "h");
+      L.push("price_lookahead_margin: " + n(P.price_lookahead_margin));
+    } else L.push("price_forecast_sensor: []");
+    if (P.use_near) {
+      L.push("price_near_sensor: sensor.REPLACE_price_next_" + P.near_hours + "h");
+      L.push("price_falling_margin: " + n(P.price_falling_margin));
+      L.push("price_falling_hold: " + n(P.price_falling_hold));
+    } else L.push("price_near_sensor: []");
+    if (P.use_demand) {
+      L.push("demand_lookahead_hours: " + n(P.demand_lookahead_hours));
+      L.push("demand_cold_ref: " + n(P.demand_cold_ref));
+      L.push("demand_hot_ref: " + n(P.demand_hot_ref));
+    } else L.push("forward_outdoor_helper: []");
+    L.push("cool_day_threshold: " + n(P.cool_day_threshold));
+    L.push("heat_day_threshold: " + n(P.heat_day_threshold));
+    L.push("heating_reference: " + P.heating_reference);
+    L.push('night_start: "' + P.night_start + ':00"');
+    L.push('night_end: "' + P.night_end + ':00"');
+    L.push("storage_overrides_schedule: " + !!P.storage_overrides_schedule);
+    if (P.use_indoor) L.push("indoor_deadband: " + n(P.indoor_deadband));
+    else L.push("indoor_sensors: []");
+    L.push("min_running_minutes: " + n(P.min_running_minutes));
+    L.push("min_idle_minutes: " + n(P.min_idle_minutes));
+    return L.join("\n");
+  }
+
+  // src/blueprint.js
+  var HOUR2 = 36e5;
+  var MIN2 = 6e4;
+  var clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+  function stepAt(series, t) {
+    if (!series || !series.length || t < series[0].t) return null;
+    let lo = 0, hi = series.length - 1;
+    while (lo < hi) {
+      const m = lo + hi + 1 >> 1;
+      if (series[m].t <= t) lo = m;
+      else hi = m - 1;
+    }
+    return series[lo].v;
+  }
+  function linAt(series, t) {
+    if (!series || !series.length) return null;
+    if (t <= series[0].t) return t < series[0].t - 2 * HOUR2 ? null : series[0].v;
+    const last = series[series.length - 1];
+    if (t >= last.t) return t > last.t + 2 * HOUR2 ? null : last.v;
+    let lo = 0, hi = series.length - 1;
+    while (hi - lo > 1) {
+      const m = lo + hi >> 1;
+      if (series[m].t <= t) lo = m;
+      else hi = m;
+    }
+    const a = series[lo], b = series[hi];
+    return a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t);
+  }
+  function priceGrid(series, intervalMin, tStart, tEnd) {
+    const iv = intervalMin * MIN2;
+    const g0 = Math.floor(tStart / iv) * iv;
+    const out = [];
+    for (let t = g0; t < tEnd; t += iv) out.push({ t, v: stepAt(series, t + iv / 2) });
+    return { start: g0, iv, slots: out };
+  }
+  function nextAvg(grid, t, hours) {
+    const k = Math.floor((t - grid.start) / grid.iv);
+    const n = Math.round(hours * HOUR2 / grid.iv);
+    let s = 0, c = 0;
+    for (let i = k + 1; i <= k + n && i < grid.slots.length; i++) {
+      const v = grid.slots[i] && grid.slots[i].v;
+      if (v !== null && v !== void 0 && isFinite(v)) {
+        s += v;
+        c++;
+      }
+    }
+    return c > 0 ? s / c : null;
+  }
+  function detectInterval(series) {
+    if (!series || series.length < 3) return 60;
+    let quarter = 0;
+    for (const p of series) {
+      const m = new Date(p.t).getMinutes();
+      if (m === 15 || m === 30 || m === 45) quarter++;
+    }
+    return quarter / series.length > 0.05 ? 15 : 60;
+  }
+  var BLUEPRINT_DEFAULTS = {
+    // comfort axis
+    heat_comfort: 21,
+    heat_charge: 23.5,
+    heat_coast: 19,
+    cool_comfort: 24,
+    cool_charge: 21,
+    cool_coast: 26.5,
+    // price
+    price_cheap: 0.2,
+    price_expensive: 0.35,
+    use_forward: true,
+    forward_hours: 6,
+    price_lookahead_margin: 0.15,
+    use_near: true,
+    near_hours: 2,
+    price_falling_margin: 0.1,
+    price_falling_hold: 1,
+    // demand
+    use_demand: true,
+    demand_lookahead_hours: 6,
+    demand_cold_ref: 0,
+    demand_hot_ref: 32,
+    // day type
+    cool_day_threshold: 24,
+    heat_day_threshold: 16,
+    heating_reference: "average",
+    forecast_high: null,
+    forecast_low: null,
+    // null = from outdoor data
+    // schedule
+    night_start: "22:00",
+    night_end: "06:00",
+    storage_overrides_schedule: false,
+    // indoor
+    use_indoor: true,
+    indoor_deadband: 1,
+    // door/window sensors force the device off
+    use_windows: true,
+    // timing guards
+    min_running_minutes: 3,
+    min_idle_minutes: 3
+  };
+  function roundHalfEven(x) {
+    const r = Math.round(x);
+    return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+  }
+  function hm(str) {
+    const [h2, m] = String(str).split(":").map(Number);
+    return (h2 || 0) * 60 + (m || 0);
+  }
+  function decide(P, x) {
+    const price_valid = x.price !== null && isFinite(x.price);
+    const current_price = price_valid ? x.price : 0;
+    const max_t = x.high, min_t = x.low === null || x.low === void 0 ? x.high : x.low;
+    const heat_ref = P.heating_reference === "high" ? max_t : P.heating_reference === "low" ? min_t : (max_t + min_t) / 2;
+    const day_type = max_t > P.cool_day_threshold ? "cool" : heat_ref < P.heat_day_threshold ? "heat" : "off";
+    const lo = P.price_cheap, hi = P.price_expensive;
+    const pf = !price_valid ? 1 : hi > lo ? (current_price - lo) / (hi - lo) : 0;
+    const pfc = clamp(pf, 0, 1);
+    const sig_abs = 2 * pfc - 1;
+    const fwd_valid = P.use_forward && price_valid && x.fwdMean !== null && x.fwdMean > 0;
+    let sig_fwd = 0;
+    if (fwd_valid) {
+      const span = P.price_lookahead_margin * x.fwdMean;
+      sig_fwd = span > 0 ? clamp((current_price - x.fwdMean) / span, -1, 1) : 0;
+    }
+    const raw = fwd_valid ? (sig_abs + sig_fwd) / 2 : sig_abs;
+    const sig_unheld = clamp(raw, -1, 1);
+    const near_valid = P.use_near && price_valid && x.nearMean !== null && x.nearMean > 0;
+    let falling = 0;
+    if (near_valid) {
+      const span = P.price_falling_margin * x.nearMean;
+      falling = span > 0 ? clamp((current_price - x.nearMean) / span, 0, 1) : 0;
+    }
+    const h2 = P.price_falling_hold;
+    const signal = sig_unheld < h2 ? sig_unheld + falling * (h2 - sig_unheld) : sig_unheld;
+    const cool = day_type === "cool";
+    const a_comfort = cool ? P.cool_comfort : P.heat_comfort;
+    const a_charge = cool ? P.cool_charge : P.heat_charge;
+    const a_coast = cool ? P.cool_coast : P.heat_coast;
+    const demand_valid = P.use_demand && x.fwdOutdoor !== null && isFinite(x.fwdOutdoor);
+    let demand = 1;
+    if (!demand_valid) demand = 1;
+    else if (day_type === "cool") {
+      const span = P.demand_hot_ref - P.cool_comfort;
+      demand = clamp(span > 0 ? (x.fwdOutdoor - P.cool_comfort) / span : 1, 0, 1);
+    } else if (day_type === "heat") {
+      const span = P.heat_comfort - P.demand_cold_ref;
+      demand = clamp(span > 0 ? (P.heat_comfort - x.fwdOutdoor) / span : 1, 0, 1);
+    } else demand = 0;
+    const eff_charge = a_comfort + (a_charge - a_comfort) * demand;
+    const target_raw = signal > 0 ? a_comfort + signal * (a_coast - a_comfort) : a_comfort + signal * (a_comfort - eff_charge);
+    const target = roundHalfEven(target_raw * 2) / 2;
+    const d = new Date(x.now);
+    const nowm = d.getHours() * 60 + d.getMinutes();
+    const ns = hm(P.night_start), ne = hm(P.night_end);
+    const is_night = ns <= ne ? ns <= nowm && nowm < ne : nowm >= ns || nowm < ne;
+    const outdoor_valid = x.outdoor !== null && isFinite(x.outdoor);
+    let outdoor_off = false;
+    if (outdoor_valid) {
+      if (day_type === "cool") outdoor_off = x.outdoor <= P.cool_comfort;
+      else if (day_type === "heat") outdoor_off = x.outdoor >= P.heat_comfort;
+    }
+    const price_is_cheap = pfc <= 0;
+    const storage_charging = price_is_cheap && signal < 0 && day_type !== "off" && eff_charge !== a_comfort;
+    const storage_bypass = P.storage_overrides_schedule && storage_charging;
+    const indoor_valid = P.use_indoor && x.indoor !== null && x.indoor !== void 0 && isFinite(x.indoor);
+    let indoor_satisfied = false;
+    if (indoor_valid) {
+      const t = target, i = x.indoor, db = P.indoor_deadband;
+      if (day_type === "cool") indoor_satisfied = x.deviceOff ? i < t : i <= t - db;
+      else if (day_type === "heat") indoor_satisfied = x.deviceOff ? i > t : i >= t + db;
+    }
+    const window_open = !!(P.use_windows && x.windowOpen);
+    const reasons2 = [];
+    if (window_open) reasons2.push("window open");
+    if (day_type === "off") reasons2.push("dead-band day");
+    if (indoor_satisfied) reasons2.push("rooms past target");
+    if (is_night && !storage_bypass) reasons2.push("night");
+    if (outdoor_off && !storage_bypass) reasons2.push("outdoor override");
+    const should_be_off = reasons2.length > 0;
+    return {
+      day_type,
+      price_factor: pfc,
+      sig_abs,
+      sig_fwd,
+      fwd_valid,
+      sig_unheld,
+      falling,
+      near_valid,
+      signal,
+      demand,
+      eff_charge,
+      target_raw,
+      target,
+      is_night,
+      outdoor_off,
+      window_open,
+      storage_charging,
+      storage_bypass,
+      indoor_satisfied,
+      should_be_off,
+      reasons: reasons2,
+      desired_mode: should_be_off ? "off" : day_type,
+      heat_ref
+    };
+  }
+  function dayContext(price, outdoor, tStart, tEnd) {
+    const ivMin = detectInterval(price);
+    const gridEnd = Math.max(tEnd, price.length ? price[price.length - 1].t + HOUR2 : tEnd);
+    const grid = priceGrid(price, ivMin, Math.min(tStart, price.length ? price[0].t : tStart), gridEnd);
+    const dayHL = {};
+    const dayKey = (t) => {
+      const d = new Date(t);
+      return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+    };
+    for (const p of outdoor) {
+      const k = dayKey(p.t);
+      if (!dayHL[k]) dayHL[k] = { hi: -Infinity, lo: Infinity };
+      dayHL[k].hi = Math.max(dayHL[k].hi, p.v);
+      dayHL[k].lo = Math.min(dayHL[k].lo, p.v);
+    }
+    const at = (P, t) => {
+      const hl = dayHL[dayKey(t)] || { hi: null, lo: null };
+      const high = P.forecast_high !== null && P.forecast_high !== "" && isFinite(P.forecast_high) ? +P.forecast_high : hl.hi;
+      const low = P.forecast_low !== null && P.forecast_low !== "" && isFinite(P.forecast_low) ? +P.forecast_low : hl.lo;
+      const out = linAt(outdoor, t);
+      let fo = null;
+      {
+        let s = 0, c = 0;
+        const h0 = Math.floor(t / HOUR2) * HOUR2;
+        for (let i = 0; i < P.demand_lookahead_hours; i++) {
+          const v = linAt(outdoor, h0 + i * HOUR2 + HOUR2 / 2);
+          if (v !== null) {
+            s += v;
+            c++;
+          }
+        }
+        fo = c ? s / c : null;
+      }
+      return {
+        now: t,
+        price: stepAt(price, t),
+        outdoor: out,
+        fwdOutdoor: fo,
+        fwdMean: nextAvg(grid, t, P.forward_hours),
+        nearMean: nextAvg(grid, t, P.near_hours),
+        high: isFinite(high) ? high : out ?? 10,
+        low: isFinite(low) ? low : null
+      };
+    };
+    return { intervalMin: ivMin, at };
+  }
+  function controller(P, tStart) {
+    let mode2 = "off", setpoint = null, lastChange = tStart - 24 * HOUR2;
+    return {
+      get mode() {
+        return mode2;
+      },
+      get setpoint() {
+        return setpoint;
+      },
+      step(t, x) {
+        const d = decide(P, Object.assign({}, x, { deviceOff: mode2 === "off" }));
+        const since = (t - lastChange) / MIN2;
+        const guard_ok = d.should_be_off ? mode2 === "off" || since >= P.min_running_minutes : mode2 !== "off" || since >= P.min_idle_minutes;
+        if (guard_ok) {
+          if (d.desired_mode !== mode2) {
+            mode2 = d.desired_mode;
+            lastChange = t;
+          }
+          if (mode2 !== "off") setpoint = d.target;
+        }
+        return d;
+      }
+    };
+  }
+
+  // ui/charts.js
+  var NS = "http://www.w3.org/2000/svg";
+  var M = { l: 44, r: 14, t: 8, b: 22 };
+  var svgEl = (name, attrs, parent) => {
+    const e = document.createElementNS(NS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  function niceTicks(lo, hi, n) {
+    if (!isFinite(lo) || !isFinite(hi)) {
+      lo = 0;
+      hi = 1;
+    }
+    const span = hi - lo || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => span / s <= n) || 10 * mag;
+    const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
+    const out = [];
+    for (let v = a; v <= b + step / 1e6; v += step) out.push(+v.toFixed(6));
+    return { ticks: out, lo: a, hi: b, step };
+  }
+  function extent(values, pad) {
+    let lo = Infinity, hi = -Infinity;
+    for (const v of values) if (v !== null && v !== void 0 && isFinite(v)) {
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+    return isFinite(lo) ? [lo - pad, hi + pad] : [0, 1];
+  }
+  function frame(svg, { height, yt, fmtY, band, range, night }) {
+    svg.textContent = "";
+    const w = Math.max(280, svg.parentNode.clientWidth - 24);
+    svg.setAttribute("viewBox", "0 0 " + w + " " + height);
+    svg.setAttribute("height", height);
+    const pb = height - M.b - (band || 0);
+    const X = (t) => M.l + (t - range.start) / (range.end - range.start) * (w - M.l - M.r);
+    const Y = (v) => M.t + (yt.hi - v) / (yt.hi - yt.lo) * (pb - M.t);
+    if (night) {
+      const ns = hm(night.start), ne = hm(night.end);
+      for (let d = dayStart(range.start) - 24 * HOUR; d < range.end; d += 24 * HOUR) {
+        const segs = ns <= ne ? [[ns, ne]] : [[ns, 1440], [0, ne]];
+        for (const [a, b] of segs) {
+          const x0 = X(Math.max(range.start, d + a * MIN)), x1 = X(Math.min(range.end, d + b * MIN));
+          if (x1 > x0) svgEl("rect", { x: x0, y: M.t, width: x1 - x0, height: pb - M.t, class: "night" }, svg);
+        }
+      }
+    }
+    for (const v of yt.ticks) {
+      const y = Y(v);
+      svgEl("line", { x1: M.l, x2: w - M.r, y1: y, y2: y, class: v === yt.lo ? "base" : "grid" }, svg);
+      svgEl("text", { x: M.l - 6, y: y + 3.5, "text-anchor": "end" }, svg).textContent = fmtY(v);
+    }
+    const stepH = w < 520 ? 6 : 3;
+    for (let t = Math.ceil(range.start / HOUR) * HOUR; t <= range.end; t += HOUR) {
+      const hr = new Date(t).getHours();
+      if (hr % stepH) continue;
+      svgEl("text", { x: X(t), y: height - 6, "text-anchor": "middle" }, svg).textContent = String(hr).padStart(2, "0") + ":00";
+    }
+    return { svg, w, h: height, pb, X, Y, range };
+  }
+  function stepPath(rows, g, get) {
+    let d = "", prev = null, open = false;
+    for (const r of rows) {
+      const v = get(r);
+      if (v === null || v === void 0 || !isFinite(v)) {
+        if (open) d += "H" + g.X(r.t).toFixed(1);
+        open = false;
+        prev = null;
+        continue;
+      }
+      if (!open) {
+        d += "M" + g.X(r.t).toFixed(1) + "," + g.Y(v).toFixed(1);
+        open = true;
+      } else if (v !== prev) d += "H" + g.X(r.t).toFixed(1) + "V" + g.Y(v).toFixed(1);
+      prev = v;
+    }
+    if (open) d += "H" + g.X(g.range.end).toFixed(1);
+    return d;
+  }
+  function linePath(pts, g) {
+    let d = "", open = false;
+    for (const p of pts) {
+      if (p.v === null || p.v === void 0 || !isFinite(p.v)) {
+        open = false;
+        continue;
+      }
+      d += (open ? "L" : "M") + g.X(p.t).toFixed(1) + "," + g.Y(p.v).toFixed(1);
+      open = true;
+    }
+    return d;
+  }
+  var every = (rows, n, get) => rows.filter((r, i) => i % n === 0 || i === rows.length - 1).map((r) => ({ t: r.t, v: get(r) }));
+  function strip(g, rows, y, cls, isOn) {
+    let s = null;
+    const flush = (t) => {
+      if (s !== null) svgEl("rect", { x: g.X(s), y, width: Math.max(1, g.X(t) - g.X(s)), height: 5, rx: 1.5, class: cls }, g.svg);
+      s = null;
+    };
+    for (const r of rows) {
+      if (isOn(r)) {
+        if (s === null) s = r.t;
+      } else flush(r.t);
+    }
+    flush(g.range.end);
+  }
+  function stripLabel(g, y, text2) {
+    svgEl("text", { x: M.l - 6, y, "text-anchor": "end", class: "strip-lbl" }, g.svg).textContent = text2;
+  }
+  function legend(box, items) {
+    box.textContent = "";
+    for (const [cls, label, kind] of items) {
+      const s = document.createElement("span"), i = document.createElement("i");
+      i.className = cls + (kind ? " " + kind : "");
+      s.appendChild(i);
+      s.appendChild(document.createTextNode(label));
+      box.appendChild(s);
+    }
+  }
+  function quarterMeans(rows, get) {
+    const out = [];
+    let acc = 0, n = 0, t0 = null;
+    for (const r of rows) {
+      const q = Math.floor(r.t / (15 * MIN)) * 15 * MIN;
+      if (t0 !== null && q !== t0) {
+        out.push({ t: t0, v: acc / n });
+        acc = 0;
+        n = 0;
+      }
+      t0 = q;
+      acc += get(r);
+      n++;
+    }
+    if (n) out.push({ t: t0, v: acc / n });
+    return out;
+  }
+  function quarterPath(pts, g) {
+    let d = "";
+    pts.forEach((p, i) => {
+      const x = g.X(p.t), y = g.Y(p.v);
+      d += (i ? "H" + x.toFixed(1) + "V" : "M" + x.toFixed(1) + ",") + y.toFixed(1);
+    });
+    if (pts.length) d += "H" + g.X(Math.min(g.range.end, pts[pts.length - 1].t + 15 * MIN)).toFixed(1);
+    return d;
+  }
+  function hover({ stage, tip, charts, fill, count, start }) {
+    let idx = null, bound = /* @__PURE__ */ new Set();
+    function show(i) {
+      const list = charts();
+      if (!list.length) return;
+      idx = i;
+      const t = start() + i * MIN;
+      for (const c of list) {
+        const g = c.g;
+        if (!g) continue;
+        let line = g.svg.querySelector(".cross");
+        if (!line) line = svgEl("line", { class: "cross" }, g.svg);
+        const x = g.X(t);
+        line.setAttribute("x1", x);
+        line.setAttribute("x2", x);
+        line.setAttribute("y1", M.t);
+        line.setAttribute("y2", g.pb);
+        g.svg.querySelectorAll(".dot").forEach((d) => d.remove());
+        for (const [v, cls] of c.dots ? c.dots(i) : []) if (v !== null && v !== void 0 && isFinite(v)) svgEl("circle", { cx: x, cy: g.Y(v), r: 4, class: "dot " + cls }, g.svg);
+      }
+      tip.textContent = "";
+      fill(i, tip);
+      tip.hidden = false;
+      const first = list[0], sr = stage.getBoundingClientRect(), cr = first.g.svg.getBoundingClientRect();
+      const px = cr.left - sr.left + first.g.X(t) * cr.width / first.g.w;
+      const tw = tip.offsetWidth, top = first.card.offsetTop + 44;
+      let left = px + 14;
+      if (left + tw > stage.clientWidth) left = px - tw - 14;
+      if (left < 0) left = 0;
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+    }
+    function hide() {
+      idx = null;
+      tip.hidden = true;
+      for (const c of charts()) if (c.g) c.g.svg.querySelectorAll(".cross,.dot").forEach((n) => n.remove());
+    }
+    function fromEvent(e, g) {
+      const r = g.svg.getBoundingClientRect(), x = (e.clientX - r.left) * g.w / r.width;
+      const t = g.range.start + (x - M.l) / (g.w - M.l - M.r) * (g.range.end - g.range.start);
+      return Math.max(0, Math.min(count() - 1, Math.round((t - start()) / MIN)));
+    }
+    function bind() {
+      for (const c of charts()) {
+        if (bound.has(c.card)) continue;
+        bound.add(c.card);
+        c.card.addEventListener("pointermove", (e) => {
+          const cur = charts().find((x) => x.card === c.card);
+          if (cur && cur.g) show(fromEvent(e, cur.g));
+        });
+        c.card.addEventListener("pointerleave", hide);
+        c.card.addEventListener("blur", hide);
+        c.card.addEventListener("keydown", (e) => {
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            show(Math.max(0, Math.min(count() - 1, (idx ?? 0) + (e.key === "ArrowRight" ? 15 : -15))));
+          } else if (e.key === "Escape") hide();
+        });
+      }
+    }
+    return { show, hide, bind, get idx() {
+      return idx;
+    } };
+  }
+  function tipRow(tip, cls, label, value) {
+    const d = document.createElement("div");
+    d.className = "r";
+    const i = document.createElement("i");
+    if (cls) i.className = cls;
+    d.appendChild(i);
+    const l = document.createElement("span");
+    l.className = "l";
+    l.textContent = label;
+    d.appendChild(l);
+    const v = document.createElement("b");
+    v.textContent = value;
+    d.appendChild(v);
+    tip.appendChild(d);
+  }
+
+  // src/room.js
+  var ROOM_DEFAULTS = Object.assign({}, BLUEPRINT_DEFAULTS, {
+    model_loss_w_per_k: 100,
+    model_capacity_kwh_per_k: 4,
+    model_max_kw: 5,
+    model_cop: 3.5,
+    model_start_temp: null,
+    model_ctrl_minutes: 30
+  });
+  function carnotHeat(tin, tout) {
+    const th = tin + 273.15 + 12, tc = tout + 273.15 - 6;
+    return th / Math.max(8, th - tc);
+  }
+  function carnotCool(tin, tout) {
+    const tc = tin + 273.15 - 10, th = tout + 273.15 + 10;
+    return tc / Math.max(8, th - tc);
+  }
+  var HEAT_REF = carnotHeat(21, 7);
+  var COOL_REF = carnotCool(27, 35);
+  function simulateRoom(data, Pin, range) {
+    const P = Object.assign({}, ROOM_DEFAULTS, Pin);
+    const tStart = range.start, tEnd = range.end;
+    const ctx = dayContext(data.price, data.outdoor, tStart, tEnd);
+    const H = P.model_loss_w_per_k / 1e3;
+    const C = Math.max(0.1, P.model_capacity_kwh_per_k);
+    const Pmax = P.model_max_kw;
+    const tauCtrl = Math.max(1, P.model_ctrl_minutes) / 60;
+    const dt = 1 / 60;
+    let tin = P.model_start_temp;
+    if (tin === null || tin === void 0 || !isFinite(tin)) {
+      const m = data.indoor && data.indoor.length ? linAt(data.indoor, tStart) : null;
+      tin = m !== null ? m : P.heat_comfort;
+    }
+    const dev = controller(P, tStart);
+    const rows = [];
+    let energy = 0, cost = 0, heat = 0;
+    for (let t = tStart; t < tEnd; t += MIN2) {
+      const x = ctx.at(P, t);
+      x.indoor = tin;
+      const d = dev.step(t, x);
+      const mode2 = dev.mode, setpoint = dev.setpoint;
+      const tout = x.outdoor ?? tin;
+      const loss = H * (tin - tout);
+      let pth = 0, pel = 0;
+      if (mode2 === "heat") {
+        pth = clamp(loss + C * (setpoint - tin) / tauCtrl, 0, Pmax);
+        pel = pth / (P.model_cop * carnotHeat(tin, tout) / HEAT_REF);
+      } else if (mode2 === "cool") {
+        pth = -clamp(-loss + C * (tin - setpoint) / tauCtrl, 0, Pmax);
+        pel = -pth / (P.model_cop * carnotCool(tin, tout) / COOL_REF);
+      }
+      tin += (pth - loss) * dt / C;
+      energy += pel * dt;
+      heat += Math.abs(pth) * dt;
+      if (x.price !== null) cost += pel * dt * x.price;
+      rows.push(Object.assign(d, {
+        t,
+        price: x.price,
+        outdoor: x.outdoor,
+        fwdMean: x.fwdMean,
+        nearMean: x.nearMean,
+        fwdOutdoor: x.fwdOutdoor,
+        high: x.high,
+        low: x.low,
+        mode: mode2,
+        setpoint: mode2 === "off" ? null : setpoint,
+        indoor: tin,
+        pth,
+        pel
+      }));
+    }
+    let minIn = Infinity, maxIn = -Infinity;
+    for (const r of rows) {
+      minIn = Math.min(minIn, r.indoor);
+      maxIn = Math.max(maxIn, r.indoor);
+    }
+    return { rows, energy, cost, heat, avgPrice: energy > 0 ? cost / energy : null, minIn, maxIn, intervalMin: ctx.intervalMin };
+  }
+
+  // ui/room.js
+  var EXAMPLES = [
+    {
+      id: "ex-autumn",
+      name: "Example: autumn day, midday solar dip",
+      lo: 2,
+      hi: 10,
+      p: [0.27, 0.265, 0.26, 0.26, 0.265, 0.28, 0.31, 0.34, 0.345, 0.32, 0.28, 0.24, 0.21, 0.195, 0.2, 0.23, 0.27, 0.32, 0.37, 0.38, 0.35, 0.32, 0.3, 0.285]
+    },
+    {
+      id: "ex-winter",
+      name: "Example: winter day, evening peak, cheap night",
+      lo: -5,
+      hi: 1,
+      p: [0.29, 0.27, 0.255, 0.245, 0.24, 0.25, 0.29, 0.34, 0.36, 0.345, 0.33, 0.32, 0.31, 0.31, 0.32, 0.34, 0.37, 0.41, 0.42, 0.39, 0.35, 0.33, 0.31, 0.3]
+    },
+    {
+      id: "ex-windy",
+      name: "Example: windy spring day, slowly falling",
+      lo: 5,
+      hi: 13,
+      p: [0.26, 0.255, 0.25, 0.25, 0.25, 0.255, 0.25, 0.24, 0.23, 0.22, 0.21, 0.2, 0.19, 0.185, 0.18, 0.175, 0.19, 0.23, 0.29, 0.31, 0.29, 0.27, 0.26, 0.255]
+    },
+    {
+      id: "ex-summer",
+      name: "Example: summer heat, cooling day",
+      lo: 20,
+      hi: 33,
+      p: [0.27, 0.26, 0.25, 0.25, 0.26, 0.27, 0.29, 0.31, 0.28, 0.23, 0.19, 0.16, 0.14, 0.13, 0.14, 0.17, 0.22, 0.28, 0.33, 0.36, 0.34, 0.31, 0.29, 0.28]
+    }
+  ];
+  function buildExample(ex) {
+    const d0 = dayStart(Date.now()) - 24 * HOUR;
+    const price = [], outdoor = [];
+    for (let d = 0; d < 2; d++) for (let q = 0; q < 96; q++) {
+      const h2 = q / 4, i = Math.floor(h2), f = h2 - i;
+      const a = ex.p[i % 24], b = ex.p[(i + 1) % 24];
+      const zig = (q % 4 - 1.5) * 12e-4 * Math.sign(b - a);
+      const drift = d === 1 ? 6e-3 * Math.sin(i / 3) : 0;
+      price.push({ t: d0 + d * 24 * HOUR + q * 15 * MIN, v: +(a + (b - a) * f + zig + drift).toFixed(4) });
+    }
+    for (let m = 0; m < 48 * 4; m++) {
+      const t = d0 + m * 15 * MIN, h2 = m / 4 % 24;
+      const ph = Math.cos((h2 - 15) / 24 * 2 * Math.PI);
+      outdoor.push({ t, v: +((ex.lo + ex.hi) / 2 + (ex.hi - ex.lo) / 2 * ph + 0.3 * Math.sin(m / 5)).toFixed(2) });
+    }
+    return { series: { price, outdoor }, map: { price: "price", outdoor: "outdoor", indoor: "" }, days: [d0], label: ex.name, example: true };
+  }
+  function num(s) {
+    if (s === void 0 || s === null) return NaN;
+    s = String(s).trim().replace(/^"|"$/g, "");
+    if (/^-?\d+,\d+$/.test(s)) s = s.replace(",", ".");
+    return s === "" ? NaN : Number(s);
+  }
+  function time(s) {
+    s = String(s).trim().replace(/^"|"$/g, "");
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
+      const [h2, m] = s.split(":").map(Number);
+      return dayStart(Date.now()) + h2 * HOUR + m * MIN;
+    }
+    const t = Date.parse(s.includes("T") || !/^\d{4}-\d{2}-\d{2} /.test(s) ? s : s.replace(" ", "T"));
+    return isNaN(t) ? null : t;
+  }
+  function parseText(text2) {
+    text2 = text2.replace(/^﻿/, "").trim();
+    if (!text2) throw new Error("The file is empty.");
+    const out = {};
+    const add = (name, t, v) => {
+      if (t === null || !isFinite(v)) return;
+      (out[name] = out[name] || []).push({ t, v });
+    };
+    if (text2[0] === "[" || text2[0] === "{") {
+      let j = JSON.parse(text2);
+      if (j && j.meta && (j.stats_5min || j.history)) throw new Error("This is an apartment export. Switch to Whole apartment to load it.");
+      if (!Array.isArray(j)) j = Object.values(j);
+      const flat = j.flat ? j.flat(2) : [].concat.apply([], j);
+      for (const s of flat) if (s && s.entity_id) add(s.entity_id, time(s.last_changed || s.last_updated || s.lu || ""), num(s.state));
+    } else {
+      const lines = text2.split(/\r?\n/).filter((l) => l.trim());
+      const head = lines[0];
+      const delim = (head.match(/;/g) || []).length > (head.match(/,/g) || []).length ? ";" : head.includes("	") ? "	" : ",";
+      const cols = head.split(delim).map((c) => c.trim().replace(/^"|"$/g, ""));
+      const lc = cols.map((c) => c.toLowerCase());
+      const ie = lc.indexOf("entity_id"), is = lc.indexOf("state");
+      const it = ["last_changed", "last_updated", "time", "timestamp"].map((k) => lc.indexOf(k)).find((i) => i >= 0);
+      if (ie >= 0 && is >= 0 && it !== void 0) {
+        for (const l of lines.slice(1)) {
+          const c = l.split(delim);
+          add(c[ie].trim().replace(/^"|"$/g, ""), time(c[it]), num(c[is]));
+        }
+      } else {
+        for (const l of lines.slice(1)) {
+          const c = l.split(delim);
+          const t = time(c[0]);
+          for (let k = 1; k < cols.length; k++) add(cols[k] || "column " + k, t, num(c[k]));
+        }
+      }
+    }
+    for (const k of Object.keys(out)) {
+      out[k].sort((a, b) => a.t - b.t);
+      if (out[k].length < 2) delete out[k];
+    }
+    if (!Object.keys(out).length) throw new Error("No numeric series found. Expected Home Assistant history (CSV or JSON) or a table with a time column.");
+    return out;
+  }
+  var median = (a) => {
+    const s = a.map((p) => p.v).sort((x, y) => x - y);
+    return s[s.length >> 1];
+  };
+  function guessMap(series) {
+    const names = Object.keys(series);
+    const pick = (re, not, ok) => names.find((n) => re.test(n.toLowerCase()) && !(not && not.test(n.toLowerCase())) && (!ok || ok(series[n])));
+    const price = pick(/price|preis|tibber|strom|electric|energy|epex|nordpool|awattar/, /next|avg|average|⌀|trend|level|rating|outlook|trajectory|min|max|rank/) || names.find((n) => {
+      const m = median(series[n]);
+      return m > -0.5 && m < 1.5;
+    }) || names[0];
+    const temp = (s) => {
+      const m = median(s);
+      return m > -40 && m < 50;
+    };
+    const outdoor = pick(/outdoor|outside|aussen|außen|exterior|weather|balkon|garten|garden|terrasse/, null, temp) || names.find((n) => n !== price && temp(series[n])) || "";
+    const indoor = pick(/indoor|room|innen|wohn|flur|hallway|living|zimmer|bed|schlaf|kitchen|küche|office|buero|büro/, /outdoor|outside|aussen|außen/, temp) || "";
+    return { price, outdoor: outdoor === price ? "" : outdoor, indoor: indoor === outdoor || indoor === price ? "" : indoor };
+  }
+  function createRoomView({ form: form2 }) {
+    let P = Object.assign({}, ROOM_DEFAULTS, store.get("acs-sim-params-v1") || {});
+    let pinned = store.get("acs-sim-baseline-v1");
+    let DATA = null, loaded = null, RES = null, BRES = null, RANGE = null, IND = null, GEO = [];
+    let active = false, pending = false;
+    const sourceSel = $("source"), daySel = $("day"), stage = $("stage");
+    const hv = hover({
+      stage,
+      tip: $("tip"),
+      charts: () => GEO,
+      count: () => RES ? RES.rows.length : 0,
+      start: () => RANGE.start,
+      fill: (i, tip) => fillTip(i, tip)
+    });
+    function fillSources() {
+      sourceSel.textContent = "";
+      for (const ex of EXAMPLES) {
+        const o = document.createElement("option");
+        o.value = ex.id;
+        o.textContent = ex.name;
+        sourceSel.appendChild(o);
+      }
+      if (loaded) {
+        const o = document.createElement("option");
+        o.value = "file";
+        o.textContent = "Loaded: " + loaded.label;
+        sourceSel.appendChild(o);
+      }
+    }
+    function setSource(id) {
+      if (id === "file" && loaded) DATA = loaded;
+      else DATA = buildExample(EXAMPLES.find((e) => e.id === id) || EXAMPLES[0]);
+      sourceSel.value = id === "file" && loaded ? "file" : (EXAMPLES.find((e) => e.id === id) || EXAMPLES[0]).id;
+      $("mapping").hidden = !!DATA.example;
+      if (!DATA.example) fillMapping();
+      fillDays();
+      schedule();
+    }
+    function fillMapping() {
+      const names = Object.keys(DATA.series);
+      for (const role of ["price", "outdoor", "indoor"]) {
+        const sel = $("map-" + role);
+        sel.textContent = "";
+        if (role !== "price") {
+          const o = document.createElement("option");
+          o.value = "";
+          o.textContent = role === "indoor" ? "(none)" : "(none, assume 10 \xB0C)";
+          sel.appendChild(o);
+        }
+        for (const n of names) {
+          const o = document.createElement("option");
+          o.value = n;
+          o.textContent = n + " (" + DATA.series[n].length + " values)";
+          sel.appendChild(o);
+        }
+        sel.value = DATA.map[role] || "";
+      }
+    }
+    function priceSeries() {
+      const raw = DATA.series[DATA.map.price] || [];
+      DATA.scale = (raw.length ? median(raw) : 0) > 3 ? 100 : 1;
+      return DATA.scale === 1 ? raw : raw.map((p) => ({ t: p.t, v: p.v / 100 }));
+    }
+    function fillDays() {
+      const pr = priceSeries();
+      daySel.textContent = "";
+      if (!pr.length) return;
+      const first = dayStart(pr[0].t), last = pr[pr.length - 1].t;
+      const days = [];
+      for (let d = first; d <= last; d = dayStart(d + 26 * HOUR)) days.push(d);
+      let pick = days[0];
+      for (const d of days) {
+        if (pr[0].t <= d + HOUR && last >= d + 20 * HOUR) {
+          pick = d;
+          break;
+        }
+      }
+      if (DATA.example) pick = DATA.days[0];
+      for (const d of days) {
+        const o = document.createElement("option");
+        o.value = d;
+        o.textContent = new Date(d).toLocaleDateString(void 0, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+        daySel.appendChild(o);
+      }
+      daySel.value = pick;
+      $("dayfield").hidden = !!DATA.example;
+    }
+    function loadText(text2, label) {
+      const info = $("datainfo");
+      try {
+        const series = parseText(text2);
+        loaded = { series, map: guessMap(series), label, example: false };
+        fillSources();
+        setSource("file");
+      } catch (e) {
+        info.textContent = "Could not read that data: " + e.message;
+        info.classList.add("err");
+      }
+    }
+    function baselineParams() {
+      if (pinned) return Object.assign({}, ROOM_DEFAULTS, pinned);
+      return Object.assign({}, P, { use_near: false });
+    }
+    function run() {
+      const price = priceSeries();
+      const outdoor = DATA.series[DATA.map.outdoor] || [];
+      IND = DATA.map.indoor ? DATA.series[DATA.map.indoor] : null;
+      const d0 = +daySel.value || (price.length ? dayStart(price[0].t) : dayStart(Date.now()));
+      const start = Math.max(d0, price.length ? price[0].t : d0);
+      const end = Math.min(d0 + 24 * HOUR, price.length ? price[price.length - 1].t + detectInterval(price) * MIN : d0 + 24 * HOUR);
+      const outd = outdoor.length ? outdoor : [{ t: start - HOUR, v: 10 }, { t: end + 24 * HOUR, v: 10 }];
+      RANGE = { start: Math.floor(start / MIN) * MIN, end: Math.ceil(end / MIN) * MIN };
+      const data = { price, outdoor: outd, indoor: IND };
+      if (RANGE.end - RANGE.start < 30 * MIN) {
+        RES = BRES = null;
+        return;
+      }
+      RES = simulateRoom(data, P, RANGE);
+      BRES = simulateRoom(data, baselineParams(), RANGE);
+      const info = $("datainfo");
+      info.classList.remove("err");
+      const span = (RANGE.end - RANGE.start) / HOUR;
+      const hl = RES.rows.length ? RES.rows[0] : null;
+      info.textContent = (DATA.example ? "Made-up example prices, not your data. " : "") + (RES.intervalMin === 15 ? "15-minute" : "Hourly") + " prices" + (DATA.scale === 100 ? ", converted from ct/kWh" : "") + " \xB7 " + (span >= 23.9 ? "full day" : span.toFixed(1) + " h") + (hl ? " \xB7 " + (hl.day_type === "heat" ? "heating" : hl.day_type === "cool" ? "cooling" : "dead-band") + " day (high " + fmt(hl.high, 1) + " \xB0C, low " + fmt(hl.low, 1) + " \xB0C)" : "");
+    }
+    function schedule() {
+      if (pending || !active) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        if (!active) return;
+        run();
+        render();
+      });
+    }
+    function render() {
+      renderCompare();
+      renderTiles();
+      renderCharts();
+      $("yaml").textContent = yamlFor(P, DATA && DATA.scale);
+      renderTable();
+    }
+    function renderCompare() {
+      const w = $("basewhat");
+      w.textContent = "";
+      w.appendChild(document.createTextNode("Grey lines show the baseline: "));
+      const b = document.createElement("b");
+      b.textContent = pinned ? "settings pinned " + (pinned._at || "") : "the same settings with the falling-price hold switched off";
+      w.appendChild(b);
+      $("unpin").disabled = !pinned;
+    }
+    function renderTiles() {
+      const box = $("tiles");
+      box.textContent = "";
+      if (!RES) return;
+      const T = (s) => document.createTextNode(s);
+      box.appendChild(tile("Electricity cost", "\u20AC" + RES.cost.toFixed(2), "", [[delta(RES.cost, BRES.cost, 2, " \u20AC", true)], [T("baseline \u20AC" + BRES.cost.toFixed(2))]]));
+      box.appendChild(tile("Average price paid", RES.avgPrice === null ? "\u2013" : RES.avgPrice.toFixed(3), "\u20AC/kWh", [[delta(RES.avgPrice, BRES.avgPrice, 3, "", true)], [T("baseline " + fmt(BRES.avgPrice, 3))]]));
+      box.appendChild(tile("Energy used", RES.energy.toFixed(1), "kWh", [[delta(RES.energy, BRES.energy, 1, " kWh", true)], [T("baseline " + BRES.energy.toFixed(1))]]));
+      const endC = RES.rows[RES.rows.length - 1].indoor, endB = BRES.rows[BRES.rows.length - 1].indoor;
+      box.appendChild(tile("Room, coldest to warmest", RES.minIn.toFixed(1) + "\u2013" + RES.maxIn.toFixed(1), "\xB0C", [
+        [T("ends the day at " + endC.toFixed(1) + " \xB0C")],
+        [T("baseline " + BRES.minIn.toFixed(1) + "\u2013" + BRES.maxIn.toFixed(1) + ", ends at " + endB.toFixed(1))]
+      ]));
+    }
+    let powerCur = [], powerBase = [];
+    const quarterIndex = (t) => Math.floor(t / (15 * MIN)) - Math.floor(RANGE.start / (15 * MIN));
+    function renderCharts() {
+      const ids = ["ch-temp", "ch-outdoor", "ch-price", "ch-power"];
+      if (!RES) {
+        ids.forEach((id) => $(id).textContent = "");
+        GEO = [];
+        return;
+      }
+      const rows = RES.rows, brows = BRES.rows, night = { start: P.night_start, end: P.night_end };
+      const ind = IND ? IND.filter((p) => p.t >= RANGE.start && p.t <= RANGE.end) : [];
+      let yt = niceTicks(...extent(rows.map((r) => r.target).concat(rows.map((r) => r.indoor), brows.map((r) => r.target), ind.map((p) => p.v)), 0.3), 5);
+      const gT = frame($("ch-temp"), { height: 286, yt, fmtY: (v) => v.toFixed(yt.step < 1 ? 1 : 0) + "\xB0", band: 30, range: RANGE, night });
+      svgEl("path", { d: stepPath(brows, gT, (r) => r.target), class: "ln thin c-base" }, gT.svg);
+      if (ind.length) svgEl("path", { d: linePath(ind, gT), class: "ln thin c-room measured" }, gT.svg);
+      svgEl("path", { d: linePath(every(rows, 5, (r) => r.indoor), gT), class: "ln c-room" }, gT.svg);
+      svgEl("path", { d: stepPath(rows, gT, (r) => r.target), class: "ln thin c-target measured" }, gT.svg);
+      svgEl("path", { d: stepPath(rows, gT, (r) => r.mode === "off" ? null : r.target), class: "ln c-target" }, gT.svg);
+      strip(gT, rows, gT.pb + 14, "c-target", (r) => r.mode !== "off");
+      strip(gT, brows, gT.pb + 22, "c-base", (r) => r.mode !== "off");
+      stripLabel(gT, gT.pb + 19, "runs");
+      stripLabel(gT, gT.pb + 27, "base");
+      legend($("leg-temp"), [["c-target", "Target (faint while off)"], ["c-base", "Target, baseline", "thin"], ["c-room", "Room (model)"]].concat(ind.length ? [["c-room", "Room (measured)", "thin fade"]] : []));
+      yt = niceTicks(...extent(rows.map((r) => r.outdoor), 0.5), 3);
+      const gO = frame($("ch-outdoor"), { height: 130, yt, fmtY: (v) => v.toFixed(yt.step < 1 ? 1 : 0) + "\xB0", range: RANGE, night });
+      svgEl("path", { d: linePath(every(rows, 5, (r) => r.outdoor), gO), class: "ln c-outdoor" }, gO.svg);
+      const pv = rows.map((r) => r.price).concat(P.use_forward ? rows.map((r) => r.fwdMean) : [], P.use_near ? rows.map((r) => r.nearMean) : [], [P.price_cheap, P.price_expensive]);
+      const ytp = niceTicks(...extent(pv, 0), 4);
+      const gP = frame($("ch-price"), { height: 190, yt: ytp, fmtY: (v) => v.toFixed(ytp.step < 0.01 ? 3 : 2), range: RANGE, night });
+      if (P.use_near) holdBands(gP, rows);
+      refLines(gP, ytp, P);
+      if (P.use_forward) svgEl("path", { d: stepPath(rows, gP, (r) => r.fwdMean), class: "ln thin c-forward" }, gP.svg);
+      if (P.use_near) svgEl("path", { d: stepPath(rows, gP, (r) => r.nearMean), class: "ln thin c-near" }, gP.svg);
+      svgEl("path", { d: stepPath(rows, gP, (r) => r.price), class: "ln c-price" }, gP.svg);
+      const items = [["c-price", "Price now"]];
+      if (P.use_forward) items.push(["c-forward", "\u2300 next " + P.forward_hours + " h", "thin"]);
+      if (P.use_near) {
+        items.push(["c-near", "\u2300 next " + P.near_hours + " h", "thin"]);
+        items.push(["c-price", "Holding: price still falling", "box fade"]);
+      }
+      legend($("leg-price"), items);
+      powerCur = quarterMeans(rows, (r) => r.pel);
+      powerBase = quarterMeans(brows, (r) => r.pel);
+      const ytw = niceTicks(0, Math.max(0.5, ...powerCur.concat(powerBase).map((p) => p.v)), 3);
+      const gW = frame($("ch-power"), { height: 150, yt: ytw, fmtY: (v) => v.toFixed(ytw.step < 1 ? 1 : 0) + " kW", range: RANGE, night });
+      const dc = quarterPath(powerCur, gW);
+      if (powerCur.length) svgEl("path", { d: dc + "V" + gW.Y(0).toFixed(1) + "H" + gW.X(powerCur[0].t).toFixed(1) + "Z", class: "area c-target" }, gW.svg);
+      svgEl("path", { d: quarterPath(powerBase, gW), class: "ln thin c-base" }, gW.svg);
+      svgEl("path", { d: dc, class: "ln c-target" }, gW.svg);
+      legend($("leg-power"), [["c-target", "Current settings"], ["c-base", "Baseline", "thin"]]);
+      GEO = [
+        { card: $("card-temp"), g: gT, dots: (i) => [[rows[i].target, "c-target"], [rows[i].indoor, "c-room"]] },
+        { card: $("card-outdoor"), g: gO, dots: (i) => [[rows[i].outdoor, "c-outdoor"]] },
+        { card: $("card-price"), g: gP, dots: (i) => [[rows[i].price, "c-price"]] },
+        { card: $("card-power"), g: gW }
+      ];
+      hv.bind();
+      if (hv.idx !== null) hv.show(hv.idx);
+    }
+    function fillTip(i, tip) {
+      const r = RES.rows[i], b = BRES.rows[i], q = quarterIndex(r.t), pc = powerCur[q], pb = powerBase[q];
+      const head = document.createElement("div");
+      head.className = "t";
+      head.textContent = hhmm(r.t);
+      tip.appendChild(head);
+      tipRow(tip, "c-target", "Target", fmt(r.target, 1) + " \xB0C \xB7 " + r.mode);
+      tipRow(tip, "c-base", "Baseline", fmt(b.target, 1) + " \xB0C \xB7 " + b.mode);
+      tipRow(tip, "c-room", "Room (model)", fmt(r.indoor, 1) + " \xB0C");
+      tipRow(tip, "c-outdoor", "Outdoor", fmt(r.outdoor, 1) + " \xB0C");
+      tipRow(tip, "c-price", "Price now", fmt(r.price, 3));
+      if (P.use_near) tipRow(tip, "c-near", "\u2300 next " + P.near_hours + " h", fmt(r.nearMean, 3));
+      if (P.use_forward) tipRow(tip, "c-forward", "\u2300 next " + P.forward_hours + " h", fmt(r.fwdMean, 3));
+      tipRow(tip, "", "Signal", (r.signal > 0 ? "+" : "") + fmt(r.signal, 2) + (r.signal !== r.sig_unheld ? "  (was " + fmt(r.sig_unheld, 2) + ")" : ""));
+      tipRow(tip, "c-target", "Power", (pc ? pc.v.toFixed(2) : "\u2013") + " kW");
+      tipRow(tip, "c-base", "Power, baseline", (pb ? pb.v.toFixed(2) : "\u2013") + " kW");
+      const why = reasons(r, P);
+      if (why) {
+        const d = document.createElement("div");
+        d.className = "why";
+        d.textContent = why;
+        tip.appendChild(d);
+      }
+    }
+    function renderTable() {
+      const tb = $("table");
+      tb.textContent = "";
+      if (!RES || !$("p-table").open) return;
+      const cols = ["Time", "Price", "\u2300 near", "\u2300 fwd", "Hold", "Signal", "Target", "Base", "Mode", "Room", "Outdoor", "kW", "Base kW"];
+      const thead = document.createElement("thead"), tr = document.createElement("tr");
+      for (const c of cols) {
+        const th = document.createElement("th");
+        th.textContent = c;
+        tr.appendChild(th);
+      }
+      thead.appendChild(tr);
+      tb.appendChild(thead);
+      const body = document.createElement("tbody");
+      for (let i = 0; i < RES.rows.length; i += 15) {
+        const r = RES.rows[i], b = BRES.rows[i], q = quarterIndex(r.t);
+        const vals = [
+          hhmm(r.t),
+          fmt(r.price, 3),
+          P.use_near ? fmt(r.nearMean, 3) : "\u2013",
+          P.use_forward ? fmt(r.fwdMean, 3) : "\u2013",
+          r.signal !== r.sig_unheld ? Math.round(r.falling * 100) + " %" : "",
+          fmt(r.signal, 2),
+          fmt(r.target, 1),
+          fmt(b.target, 1),
+          r.mode,
+          fmt(r.indoor, 1),
+          fmt(r.outdoor, 1),
+          powerCur[q] ? powerCur[q].v.toFixed(2) : "\u2013",
+          powerBase[q] ? powerBase[q].v.toFixed(2) : "\u2013"
+        ];
+        const row = document.createElement("tr");
+        for (const v of vals) {
+          const td = document.createElement("td");
+          td.textContent = v;
+          row.appendChild(td);
+        }
+        body.appendChild(row);
+      }
+      tb.appendChild(body);
+    }
+    $("pin").addEventListener("click", () => {
+      pinned = Object.assign({}, P, { _at: "at " + (/* @__PURE__ */ new Date()).toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit" }) });
+      store.set("acs-sim-baseline-v1", pinned);
+      schedule();
+    });
+    $("unpin").addEventListener("click", () => {
+      pinned = null;
+      store.set("acs-sim-baseline-v1", null);
+      schedule();
+    });
+    sourceSel.addEventListener("change", () => setSource(sourceSel.value));
+    daySel.addEventListener("change", schedule);
+    for (const role of ["price", "outdoor", "indoor"]) $("map-" + role).addEventListener("change", (e) => {
+      DATA.map[role] = e.target.value;
+      if (role === "price") fillDays();
+      schedule();
+    });
+    $("file").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      readFile(f, (t) => loadText(t, f.name), (msg) => {
+        $("datainfo").textContent = msg;
+        $("datainfo").classList.add("err");
+      });
+      e.target.value = "";
+    });
+    $("usepaste").addEventListener("click", () => loadText($("paste").value, "pasted data"));
+    $("p-table").addEventListener("toggle", renderTable);
+    $("copy").addEventListener("click", () => copyText($("yaml").textContent, $("yaml"), $("copied")));
+    fillSources();
+    return {
+      activate() {
+        active = true;
+        showMode(form2, "room");
+        writeForm(form2, P);
+        if (!DATA) setSource(EXAMPLES[0].id);
+        else schedule();
+      },
+      deactivate() {
+        active = false;
+        hv.hide();
+      },
+      input() {
+        readForm(form2, P);
+        store.set("acs-sim-params-v1", P);
+        schedule();
+      },
+      reset() {
+        P = Object.assign({}, ROOM_DEFAULTS);
+        writeForm(form2, P);
+        store.set("acs-sim-params-v1", P);
+        schedule();
+      },
+      resize() {
+        if (active && RES) renderCharts();
+      }
+    };
+  }
+  function holdBands(g, rows, pick) {
+    const get = pick || ((r) => r);
+    let s = null, f = 0;
+    const flush = (t) => {
+      if (s !== null && f > 1e-3) svgEl("rect", { x: g.X(s), y: M.t, width: Math.max(0.5, g.X(t) - g.X(s)), height: g.pb - M.t, class: "hold", opacity: (0.06 + 0.22 * f).toFixed(3) }, g.svg);
+      s = null;
+    };
+    for (const r of rows) {
+      const d = get(r);
+      const held = d && d.signal !== d.sig_unheld ? d.falling : 0;
+      if (s === null || held !== f) {
+        flush(r.t);
+        s = r.t;
+        f = held;
+      }
+    }
+    flush(g.range.end);
+  }
+  function refLines(g, yt, P) {
+    for (const [v, name] of [[P.price_cheap, "cheap"], [P.price_expensive, "expensive"]]) {
+      if (v < yt.lo || v > yt.hi) continue;
+      svgEl("line", { x1: M.l, x2: g.w - M.r, y1: g.Y(v), y2: g.Y(v), class: "ref" }, g.svg);
+      svgEl("text", { x: g.w - M.r, y: g.Y(v) - 3, "text-anchor": "end" }, g.svg).textContent = name;
+    }
+  }
+  function reasons(d, P) {
+    if (!d) return "";
+    const parts = [];
+    if (d.near_valid && d.falling > 0 && d.signal !== d.sig_unheld) parts.push("Holding " + Math.round(d.falling * 100) + " %: the next " + P.near_hours + " h are cheaper.");
+    if (d.mode === "off" && d.reasons && d.reasons.length) parts.push("Off: " + d.reasons.join(", ") + ".");
+    else if (d.mode === "off" && d.should_be_off === false) parts.push("Off: timing guard.");
+    if (d.storage_bypass) parts.push("Charging through night mode.");
+    return parts.join(" ");
+  }
+
+  // src/apartment.js
+  var ZONES = [
+    { id: "office", label: "Office", ac: true, window: true },
+    { id: "bedroom", label: "Bedroom", ac: true, window: true },
+    { id: "living", label: "Living room & kitchen", ac: true, window: true },
+    { id: "bath", label: "Bathroom", heater: true },
+    { id: "hall", label: "Hallway", hub: true }
+  ];
+  var ZONE_IDS = ZONES.map((z) => z.id);
+  var AC_ZONES = ZONES.filter((z) => z.ac).map((z) => z.id);
+  var WINDOW_ZONES = ZONES.filter((z) => z.window).map((z) => z.id);
+  var HUB = ZONES.findIndex((z) => z.hub);
+  var BATH = ZONES.findIndex((z) => z.heater);
+  var SOLAR = ["D", "E", "S", "W"];
+  function modeCode(s) {
+    if (s === "heat") return 1;
+    if (s === "cool" || s === "dry") return 2;
+    if (s === "heat_cool" || s === "auto") return 3;
+    return 0;
+  }
+  function defaultModel() {
+    const z = (Ca, Cm, Cw, Ham, Hmw, Hwo, Hwn, H, Hw, q, sol) => ({ Ca, Cm, Cw, Ham, Hmw, Hwo, Hwn, H, Hw, q, qc: 0, qs: 0, ...sol });
+    return {
+      version: 3,
+      zones: {
+        office: z(0.25, 1, 3, 0.35, 0.15, 0.014, 8e-3, 5e-3, 0.12, 0.04, { sD: 0.6, sE: 0, sS: 0.8, sW: 0 }),
+        bedroom: z(0.25, 1, 3.2, 0.35, 0.15, 0.014, 8e-3, 5e-3, 0.12, 0.02, { sD: 0.6, sE: 0, sS: 0.8, sW: 0 }),
+        living: z(0.6, 2.5, 7, 0.8, 0.35, 0.032, 0.016, 0.01, 0.2, 0.12, { sD: 1.2, sE: 0, sS: 1, sW: 0.8 }),
+        bath: z(0.12, 0.4, 1, 0.2, 0.08, 5e-3, 4e-3, 2e-3, 0, 0.01, { sD: 0.1, sE: 0, sS: 0, sW: 0 }),
+        hall: z(0.2, 0.6, 2, 0.3, 0.12, 2e-3, 8e-3, 2e-3, 0, 0.02, { sD: 0, sE: 0, sS: 0, sW: 0 })
+      },
+      building: { Tnb: 20 },
+      links: { office: 0.012, bedroom: 0.012, living: 0.09, bath: 0.01 },
+      ac: {
+        office: { Kp: 1.5, off: 0.5, Qmax: 3.2 },
+        bedroom: { Kp: 1.5, off: 0.5, Qmax: 3.2 },
+        living: { Kp: 2, off: 0.8, Qmax: 4.5 }
+      },
+      plant: { Qmax: 7, eta: 0.42, standby: 0.03 }
+    };
+  }
+  function zoneSummary(model, z) {
+    const p = model.zones[z];
+    const C = p.Ca + p.Cm + p.Cw;
+    const Hloss = p.H + 1 / (1 / p.Ham + 1 / p.Hmw + 1 / Math.max(1e-9, p.Hwo + p.Hwn));
+    return { C, Hloss, tauH: C / Math.max(1e-6, Hloss) };
+  }
+  function compile(model) {
+    const n = ZONE_IDS.length;
+    const f = (k) => Float64Array.from(ZONE_IDS, (z) => model.zones[z] && model.zones[z][k] || 0);
+    const acz = AC_ZONES.map((z) => ZONE_IDS.indexOf(z));
+    const m = {
+      n,
+      Ca: f("Ca"),
+      Cm: f("Cm"),
+      Cw: f("Cw"),
+      Ham: f("Ham"),
+      Hmw: f("Hmw"),
+      Hwo: f("Hwo"),
+      Hwn: f("Hwn"),
+      H: f("H"),
+      Hw: f("Hw"),
+      q: f("q"),
+      qc: f("qc"),
+      qs: f("qs"),
+      Tnb: (model.building && model.building.Tnb) ?? 20,
+      sD: f("sD"),
+      sE: f("sE"),
+      sS: f("sS"),
+      sW: f("sW"),
+      L: Float64Array.from(ZONE_IDS, (z) => model.links[z] || 0),
+      winZone: WINDOW_ZONES.map((z) => ZONE_IDS.indexOf(z)),
+      acz,
+      Kp: Float64Array.from(AC_ZONES, (z) => model.ac[z].Kp),
+      off: Float64Array.from(AC_ZONES, (z) => model.ac[z].off),
+      Qmax: Float64Array.from(AC_ZONES, (z) => model.ac[z].Qmax),
+      plantQ: model.plant.Qmax,
+      eta: model.plant.eta,
+      standby: model.plant.standby
+    };
+    let rate = 0, Lhub = 0;
+    for (let z = 0; z < n; z++) if (z !== HUB) Lhub += m.L[z];
+    for (let z = 0; z < n; z++) {
+      const a = acz.indexOf(z);
+      const air = (m.H[z] + m.Hw[z] + m.Ham[z] + (z === HUB ? Lhub : m.L[z]) + (a >= 0 ? m.Kp[a] : 0)) / m.Ca[z];
+      const mass = (m.Hmw[z] + m.Ham[z]) / m.Cm[z], wall = (m.Hmw[z] + m.Hwo[z] + m.Hwn[z]) / m.Cw[z];
+      rate = Math.max(rate, air, mass, wall);
+    }
+    m.maxRate = rate;
+    return m;
+  }
+  function substepsFor(m, dtH) {
+    return Math.max(1, Math.ceil(dtH * m.maxRate / 0.5));
+  }
+  function plant(m, Ta, tout, mode2, set, Qout) {
+    let sum = 0, anyOn = false;
+    for (let a = 0; a < m.acz.length; a++) {
+      const z = m.acz[a], sensed = Ta[z] + m.off[a];
+      let d = 0;
+      if (mode2[a] === 1) d = Math.min(m.Qmax[a], Math.max(0, m.Kp[a] * (set[a] - sensed)));
+      else if (mode2[a] === 2) d = -Math.min(m.Qmax[a], Math.max(0, m.Kp[a] * (sensed - set[a])));
+      else if (mode2[a] === 3) d = Math.max(-m.Qmax[a], Math.min(m.Qmax[a], m.Kp[a] * (set[a] - sensed)));
+      if (mode2[a]) anyOn = true;
+      Qout[a] = d;
+      sum += Math.abs(d);
+    }
+    const scale = sum > m.plantQ ? m.plantQ / sum : 1;
+    let pel = anyOn ? m.standby : 0;
+    for (let a = 0; a < m.acz.length; a++) {
+      Qout[a] *= scale;
+      if (Qout[a] > 0) pel += Qout[a] / (m.eta * carnotHeat(Ta[m.acz[a]], tout));
+      else if (Qout[a] < 0) pel += -Qout[a] / (m.eta * carnotCool(Ta[m.acz[a]], tout));
+    }
+    return pel;
+  }
+  function newState(m, Ta, hidden) {
+    const n = m.n, S = new Float64Array(3 * n);
+    for (let z = 0; z < n; z++) {
+      S[z] = Ta[z];
+      S[n + z] = hidden ? hidden[z] : Ta[z];
+      S[2 * n + z] = hidden ? hidden[n + z] : Ta[z];
+    }
+    return S;
+  }
+  var _fa = new Float64Array(16);
+  var _fm = new Float64Array(16);
+  var _fw = new Float64Array(16);
+  var _Q = new Float64Array(8);
+  function advance(m, S, u, dtH, Qout) {
+    const n = m.n, Q = Qout || _Q, fa = _fa, fm = _fm, fw = _fw;
+    const pel = plant(m, S, u.tout, u.mode, u.set, Q);
+    for (let z = 0; z < n; z++) {
+      const ta = S[z], tm = S[n + z], tw = S[2 * n + z], x = m.Ham[z] * (tm - ta), y = m.Hmw[z] * (tw - tm);
+      fa[z] = m.H[z] * (u.tout - ta) + m.q[z] + m.qc[z] * u.hc + m.qs[z] * u.hs + x;
+      fm[z] = y - x + m.sD[z] * u.sol.D + m.sE[z] * u.sol.E + m.sS[z] * u.sol.S + m.sW[z] * u.sol.W;
+      fw[z] = -y + m.Hwo[z] * (u.tout - tw) + m.Hwn[z] * (m.Tnb - tw);
+    }
+    for (let w = 0; w < m.winZone.length; w++) {
+      const z = m.winZone[w];
+      if (u.open[w]) fa[z] += m.Hw[z] * u.open[w] * (u.tout - S[z]);
+    }
+    for (let z = 0; z < n; z++) {
+      if (z === HUB) continue;
+      const f = m.L[z] * (S[HUB] - S[z]);
+      fa[z] += f;
+      fa[HUB] -= f;
+    }
+    if (u.heater) fa[BATH] += u.heater;
+    for (let a = 0; a < m.acz.length; a++) fa[m.acz[a]] += Q[a];
+    for (let z = 0; z < n; z++) {
+      S[z] += fa[z] * dtH / m.Ca[z];
+      S[n + z] += fm[z] * dtH / m.Cm[z];
+      S[2 * n + z] += fw[z] * dtH / m.Cw[z];
+    }
+    return pel;
+  }
+  function inputAt(g, k, u) {
+    u.tout = g.tout[k];
+    for (let w = 0; w < u.open.length; w++) u.open[w] = g.open[w][k];
+    u.sol.D = g.sol.D[k];
+    u.sol.E = g.sol.E[k];
+    u.sol.S = g.sol.S[k];
+    u.sol.W = g.sol.W[k];
+    u.heater = g.heater[k];
+    u.hc = g.hc[k];
+    u.hs = g.hs[k];
+    for (let a = 0; a < u.mode.length; a++) {
+      u.mode[a] = g.mode[a][k];
+      u.set[a] = g.set[a][k];
+    }
+  }
+  function inputBuffer(m) {
+    return {
+      tout: 0,
+      open: new Float64Array(m.winZone.length),
+      sol: { D: 0, E: 0, S: 0, W: 0 },
+      heater: 0,
+      mode: new Int8Array(m.acz.length),
+      set: new Float64Array(m.acz.length),
+      hc: 0,
+      hs: 0
+    };
+  }
+  function hourWave(t) {
+    const d = new Date(t), h2 = d.getHours() + d.getMinutes() / 60;
+    return [Math.cos(2 * Math.PI * h2 / 24), Math.sin(2 * Math.PI * h2 / 24)];
+  }
+  function estimateHidden(m, g, k0, k1) {
+    const n = m.n, out = new Float64Array((k1 - k0 + 1) * 2 * n);
+    const Tm = new Float64Array(n), Tw = new Float64Array(n);
+    const first = Math.min(k1, k0 + Math.round(24 / g.stepH));
+    for (let z = 0; z < n; z++) {
+      let a = 0, c = 0;
+      for (let k = k0; k <= first; k++) if (isFinite(g.T[z][k])) {
+        a += g.T[z][k];
+        c++;
+      }
+      Tm[z] = isFinite(g.T[z][k0]) ? g.T[z][k0] : c ? a / c : 20;
+      Tw[z] = c ? a / c : Tm[z];
+    }
+    let rate = 0;
+    for (let z = 0; z < n; z++) rate = Math.max(rate, (m.Ham[z] + m.Hmw[z]) / m.Cm[z], (m.Hmw[z] + m.Hwo[z] + m.Hwn[z]) / m.Cw[z]);
+    const sub = Math.max(1, Math.ceil(g.stepH * rate / 0.5)), dt = g.stepH / sub;
+    for (let k = k0; k <= k1; k++) {
+      const o = (k - k0) * 2 * n;
+      for (let z = 0; z < n; z++) {
+        out[o + z] = Tm[z];
+        out[o + n + z] = Tw[z];
+      }
+      if (k === k1) break;
+      const sol = g.sol, tout = g.tout[k];
+      for (let z = 0; z < n; z++) {
+        const ta = isFinite(g.T[z][k]) ? g.T[z][k] : Tm[z];
+        const s = m.sD[z] * sol.D[k] + m.sE[z] * sol.E[k] + m.sS[z] * sol.S[k] + m.sW[z] * sol.W[k];
+        for (let i = 0; i < sub; i++) {
+          const y = m.Hmw[z] * (Tw[z] - Tm[z]);
+          Tm[z] += (m.Ham[z] * (ta - Tm[z]) + y + s) * dt / m.Cm[z];
+          Tw[z] += (-y + m.Hwo[z] * (tout - Tw[z]) + m.Hwn[z] * (m.Tnb - Tw[z])) * dt / m.Cw[z];
+        }
+      }
+    }
+    return out;
+  }
+  function runRecorded(m, g, k0, k1, Ta0, H0) {
+    const n = m.n, K = k1 - k0, nA = m.acz.length;
+    const S = newState(m, Ta0, H0);
+    const outT = new Float64Array((K + 1) * n), outP = new Float64Array(K), outQ = new Float64Array(K * nA);
+    for (let z = 0; z < n; z++) outT[z] = S[z];
+    const sub = substepsFor(m, g.stepH), dt = g.stepH / sub;
+    const u = inputBuffer(m), Q = new Float64Array(nA), qs = new Float64Array(nA);
+    for (let k = k0; k < k1; k++) {
+      inputAt(g, k, u);
+      let pel = 0;
+      qs.fill(0);
+      for (let s = 0; s < sub; s++) {
+        pel += advance(m, S, u, dt, Q);
+        for (let a = 0; a < nA; a++) qs[a] += Q[a];
+      }
+      const j = k - k0;
+      outP[j] = pel / sub;
+      for (let a = 0; a < nA; a++) outQ[j * nA + a] = qs[a] / sub;
+      for (let z = 0; z < n; z++) outT[(j + 1) * n + z] = S[z];
+    }
+    return { T: outT, P: outP, Q: outQ, S };
+  }
+
+  // src/solar.js
+  var RAD = Math.PI / 180;
+  function sunPosition(t, lat, lon) {
+    const d = t / 864e5 + 24405875e-1 - 2451545;
+    const g = (357.529 + 0.98560028 * d) * RAD;
+    const q = 280.459 + 0.98564736 * d;
+    const L = (q + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * RAD;
+    const e = (23.439 - 36e-8 * d) * RAD;
+    const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+    const dec = Math.asin(Math.sin(e) * Math.sin(L));
+    const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+    const ha = (gmst * 15 + lon) * RAD - ra;
+    const phi = lat * RAD;
+    const elev = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(ha));
+    let az = Math.atan2(-Math.cos(dec) * Math.sin(ha), Math.sin(dec) * Math.cos(phi) - Math.cos(dec) * Math.sin(phi) * Math.cos(ha));
+    if (az < 0) az += 2 * Math.PI;
+    return { elev, az };
+  }
+  var FACADES = { E: 90 * RAD, S: 180 * RAD, W: 270 * RAD };
+  function irradiance(t, lat, lon, cloud) {
+    const { elev, az } = sunPosition(t, lat, lon);
+    const s = Math.sin(elev);
+    if (s <= 0.01) return { D: 0, E: 0, S: 0, W: 0, ghi: 0 };
+    const c = cloud === null || cloud === void 0 || !isFinite(cloud) ? 0.5 : Math.min(1, Math.max(0, cloud));
+    const clear = 1.098 * s * Math.exp(-0.057 / s);
+    const ghi = clear * (1 - 0.75 * Math.pow(c, 3.4));
+    const kd = Math.min(1, 0.15 + 0.85 * c * c);
+    const dhi = kd * ghi;
+    const dni = Math.min(1, (ghi - dhi) / Math.max(s, 0.05));
+    const out = { D: 0.5 * dhi + 0.1 * ghi, ghi };
+    for (const f of ["E", "S", "W"]) out[f] = dni * Math.max(0, Math.cos(elev) * Math.cos(az - FACADES[f]));
+    return out;
+  }
+
+  // src/haexport.js
+  var MIN3 = 6e4;
+  var ts = (v) => typeof v === "number" ? v : Date.parse(v);
+  var fnum = (v) => {
+    const x = typeof v === "number" ? v : parseFloat(v);
+    return isFinite(x) ? x : NaN;
+  };
+  function parseExport(json) {
+    const j = typeof json === "string" ? JSON.parse(json) : json;
+    if (!j || !j.meta || !(j.stats_5min || j.history)) throw new Error("This is not an apartment export from ha_export_snippet.js.");
+    const out = { location: j.location || null, meta: j.meta, exported: j.exported, num: {}, kind: {}, climate: {}, binary: {}, person: {}, weather: {} };
+    for (const id in j.stats_5min || {}) {
+      const rows = j.stats_5min[id].map(([t, v]) => ({ t: ts(t), v: fnum(v) })).filter((p) => isFinite(p.t) && isFinite(p.v));
+      if (rows.length > 1) {
+        out.num[id] = rows.sort((a, b) => a.t - b.t);
+        out.kind[id] = "mean5";
+      }
+    }
+    for (const id in j.history || {}) {
+      const rows = j.history[id];
+      if (id.startsWith("climate.")) {
+        out.climate[id] = rows.map(([t, s, set, cur, action]) => ({ t: ts(t), mode: modeCode(s), state: s, set: set === null ? NaN : fnum(set), cur: cur === null ? NaN : fnum(cur), action })).filter((r) => isFinite(r.t)).sort((a, b) => a.t - b.t);
+      } else if (id.startsWith("weather.")) {
+        out.weather[id] = rows.map(([t, s, temp, cloud]) => ({ t: ts(t), temp: temp === null ? NaN : fnum(temp), cloud: cloud === null ? NaN : fnum(cloud) / 100 })).filter((r) => isFinite(r.t)).sort((a, b) => a.t - b.t);
+      } else if (id.startsWith("binary_sensor.")) {
+        out.binary[id] = rows.map(([t, s]) => ({ t: ts(t), on: s === "on" ? 1 : s === "off" ? 0 : NaN })).filter((r) => isFinite(r.t)).sort((a, b) => a.t - b.t);
+      } else if (id.startsWith("person.")) {
+        out.person[id] = rows.map(([t, s]) => ({ t: ts(t), home: s === "home" ? 1 : 0 })).filter((r) => isFinite(r.t)).sort((a, b) => a.t - b.t);
+      } else if (!out.num[id]) {
+        const pts = rows.map(([t, v]) => ({ t: ts(t), v: fnum(v) })).filter((p) => isFinite(p.t)).sort((a, b) => a.t - b.t);
+        if (pts.filter((p) => isFinite(p.v)).length > 1) {
+          out.num[id] = pts;
+          out.kind[id] = "state";
+        }
+      }
+    }
+    return out;
+  }
+  var norm = (s) => String(s || "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
+  var ZONE_RE = {
+    office: /buero|office|arbeitszimmer|study/,
+    bedroom: /schlaf|bedroom|sleep/,
+    living: /wohn|living|lounge|kueche|kitchen/,
+    bath: /(^|[^a-z])bad([^a-z]|$)|badezimmer|bath|dusche|shower/,
+    hall: /flur|diele|hallway|(^|[^a-z])hall([^a-z]|$)|korridor|corridor/
+  };
+  var OUTDOOR_RE = /aussen|outdoor|outside|exterior|balkon|garten|garden|terrasse/;
+  var DEVICEISH_RE = /klima|aircon|(^|[^a-z])ac([^a-z]|$)|split|daikin|mitsubishi|midea|gree|toshiba|panasonic|fujitsu|lg_|samsung|inside|room_temp|innengeraet|indoor_unit/;
+  function text(parsed, id) {
+    const m = parsed.meta[id] || {};
+    return norm(id + " " + (m.name || ""));
+  }
+  function areaText(parsed, id) {
+    return norm((parsed.meta[id] || {}).area || "");
+  }
+  function zoneOf(parsed, id) {
+    const a = areaText(parsed, id), t = text(parsed, id);
+    for (const z of ZONE_IDS) if (a && ZONE_RE[z].test(a)) return z;
+    for (const z of ZONE_IDS) if (ZONE_RE[z].test(t)) return z;
+    return null;
+  }
+  var unitOf = (parsed, id) => (parsed.meta[id] || {}).unit || "";
+  var dcOf = (parsed, id) => (parsed.meta[id] || {}).device_class || "";
+  var meanOf = (s) => {
+    let a = 0, n = 0;
+    for (const p of s) if (isFinite(p.v)) {
+      a += p.v;
+      n++;
+    }
+    return n ? a / n : NaN;
+  };
+  function guessMapping(parsed) {
+    const ids = Object.keys(parsed.num);
+    const climateDevices = new Set(Object.keys(parsed.climate).map((c) => (parsed.meta[c] || {}).device).filter(Boolean));
+    const temps = ids.filter((id) => dcOf(parsed, id) === "temperature" || /°c|°f/i.test(unitOf(parsed, id)));
+    const power = ids.filter((id) => dcOf(parsed, id) === "power" || /^k?w$/i.test(unitOf(parsed, id)));
+    const map = { temp: {}, climate: {}, window: {}, outdoor: "", heater: "", phase: "", phasesOther: [], car: "", price: "", weather: "" };
+    for (const z of ZONE_IDS) {
+      const cands = temps.filter((id) => zoneOf(parsed, id) === z && !OUTDOOR_RE.test(text(parsed, id)));
+      cands.sort((a, b) => score(b) - score(a));
+      map.temp[z] = cands[0] || "";
+    }
+    function score(id) {
+      let s = 0;
+      if (areaText(parsed, id)) s += 1;
+      if (DEVICEISH_RE.test(text(parsed, id))) s -= 2;
+      if (climateDevices.has((parsed.meta[id] || {}).device)) s -= 3;
+      if (parsed.kind[id] === "mean5") s += 1;
+      return s;
+    }
+    const outs = temps.filter((id) => OUTDOOR_RE.test(text(parsed, id) + " " + areaText(parsed, id)));
+    outs.sort((a, b) => score(b) - score(a));
+    map.outdoor = outs[0] || "";
+    for (const z of AC_ZONES) map.climate[z] = Object.keys(parsed.climate).find((c) => zoneOf(parsed, c) === z) || "";
+    for (const z of WINDOW_ZONES) map.window[z] = Object.keys(parsed.binary).filter((b) => zoneOf(parsed, b) === z && (/window|door|opening|garage_door/.test(dcOf(parsed, b)) || /fenster|window|balkon|terrasse|tuer|door/.test(text(parsed, b))));
+    const phaseLike = power.filter((id) => /(^|[^a-z0-9])l[123]([^0-9]|$)|phase|phasen/.test(text(parsed, id)));
+    map.phasesOther = phaseLike.slice();
+    const heaters = power.filter((id) => !phaseLike.includes(id) && (zoneOf(parsed, id) === "bath" || /heiz|heater|luefter|radiator/.test(text(parsed, id))));
+    heaters.sort((a, b) => (zoneOf(parsed, b) === "bath") - (zoneOf(parsed, a) === "bath") || meanOf(parsed.num[b]) - meanOf(parsed.num[a]));
+    map.heater = heaters[0] || "";
+    map.car = power.find((id) => !phaseLike.includes(id) && /wallbox|(^|[^a-z])car([^a-z]|$)|(^|[^a-z])ev([^a-z]|$)|auto|lade|charg/.test(text(parsed, id))) || "";
+    const prices = ids.filter((id) => /\/\s*kwh/i.test(unitOf(parsed, id)) && /price|preis|strom|electric|tibber|energy/.test(text(parsed, id)) && !/next|avg|average|⌀|trend|level|rating|outlook|trajectory|min|max|rank|lowest|highest|leading|trailing|tomorrow|yesterday|today|hour/.test(text(parsed, id)));
+    map.price = prices[0] || ids.find((id) => /\/\s*kwh/i.test(unitOf(parsed, id))) || "";
+    map.weather = Object.keys(parsed.weather)[0] || "";
+    return map;
+  }
+  function pickPhase(grid, parsed, map) {
+    const events = [];
+    for (let k = 3; k < grid.K - 4; k++) if (grid.unitsOn[k] > grid.unitsOn[k - 1]) events.push(k);
+    let best = "", bestS = -Infinity, how = "jump";
+    for (const id of map.phasesOther) {
+      const p = resample(parsed, id, grid, 1e15);
+      let s;
+      if (events.length >= 5) {
+        const j = [];
+        for (const k of events) {
+          const before = (p[k - 3] + p[k - 2] + p[k - 1]) / 3, after = (p[k + 1] + p[k + 2] + p[k + 3]) / 3;
+          if (isFinite(before) && isFinite(after)) j.push(after - before);
+        }
+        const m = j.reduce((a2, b2) => a2 + b2, 0) / Math.max(1, j.length);
+        const sd = Math.sqrt(j.reduce((a2, b2) => a2 + (b2 - m) ** 2, 0) / Math.max(1, j.length - 1));
+        s = j.length >= 5 && sd > 0 ? m / (sd / Math.sqrt(j.length)) : -Infinity;
+      } else {
+        s = corr(p, grid.unitsOn);
+        how = "corr";
+      }
+      if (s > bestS) {
+        bestS = s;
+        best = id;
+      }
+    }
+    return { id: best, score: bestS, how, events: events.length };
+  }
+  function corr(a, b) {
+    let n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i], y = b[i];
+      if (!isFinite(x) || !isFinite(y)) continue;
+      n++;
+      sa += x;
+      sb += y;
+      saa += x * x;
+      sbb += y * y;
+      sab += x * y;
+    }
+    if (n < 10) return -Infinity;
+    const cov = sab / n - sa * sb / n / n, va = saa / n - sa * sa / n / n, vb = sbb / n - sb * sb / n / n;
+    return va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : -Infinity;
+  }
+  function resample(parsed, id, grid, maxAge = 6 * 36e5) {
+    const out = new Float64Array(grid.K).fill(NaN);
+    const s = parsed.num[id];
+    if (!s) return out;
+    if (parsed.kind[id] === "mean5" && grid.stepMin === 5) {
+      for (const p of s) {
+        const k = Math.round((p.t - grid.t0) / grid.step);
+        if (k >= 0 && k < grid.K && Math.abs(p.t - (grid.t0 + k * grid.step)) < MIN3) out[k] = p.v;
+      }
+      return out;
+    }
+    return stepMeans(s, grid, (p) => p.v, maxAge);
+  }
+  function stepMeans(s, grid, get, maxAge) {
+    const out = new Float64Array(grid.K).fill(NaN);
+    let j0 = -1;
+    for (let k = 0; k < grid.K; k++) {
+      const a = grid.t0 + k * grid.step, b = a + grid.step;
+      while (j0 + 1 < s.length && s[j0 + 1].t <= a) j0++;
+      let acc = 0, w = 0, j = j0, t = a;
+      while (t < b) {
+        const nextT = j + 1 < s.length ? Math.min(b, s[j + 1].t) : b;
+        if (j >= 0 && t - s[j].t <= maxAge) {
+          const v = get(s[j]);
+          if (isFinite(v)) {
+            acc += v * (nextT - t);
+            w += nextT - t;
+          }
+        }
+        t = nextT;
+        if (j + 1 < s.length && s[j + 1].t <= t) j++;
+      }
+      if (w > grid.step * 0.5) out[k] = acc / w;
+    }
+    return out;
+  }
+  function stepAtGrid(s, grid, get, maxAge) {
+    const out = new Array(grid.K).fill(null);
+    let i = -1;
+    for (let k = 0; k < grid.K; k++) {
+      const t = grid.t0 + k * grid.step + grid.step / 2;
+      while (i + 1 < s.length && s[i + 1].t <= t) i++;
+      if (i >= 0 && t - s[i].t <= maxAge) out[k] = get(s[i]);
+    }
+    return out;
+  }
+  function fillGaps(a, maxSteps) {
+    let last = -1;
+    for (let k = 0; k < a.length; k++) {
+      if (!isFinite(a[k])) continue;
+      if (last >= 0 && k - last > 1 && k - last <= maxSteps + 1)
+        for (let j = last + 1; j < k; j++) a[j] = a[last] + (a[k] - a[last]) * (j - last) / (k - last);
+      last = k;
+    }
+    return a;
+  }
+  var toKW = (parsed, id, a) => {
+    const u = unitOf(parsed, id).toLowerCase();
+    if (u !== "kw") for (let k = 0; k < a.length; k++) a[k] /= 1e3;
+    return a;
+  };
+  function buildGrid(parsed, map, opts = {}) {
+    const stepMin = opts.stepMin || 5, step = stepMin * MIN3;
+    const zoneSeries = ZONE_IDS.map((z) => parsed.num[map.temp[z]]).filter(Boolean);
+    if (!zoneSeries.length) throw new Error("No room thermometer is assigned.");
+    let a = Math.max(...zoneSeries.map((s) => s[0].t)), b = Math.min(...zoneSeries.map((s) => s[s.length - 1].t));
+    if (opts.start) a = Math.max(a, opts.start);
+    if (opts.end) b = Math.min(b, opts.end);
+    const t0 = Math.ceil(a / step) * step, K = Math.max(0, Math.floor((b - t0) / step));
+    if (K < 288) throw new Error("Less than a day of overlapping room temperatures.");
+    const grid = { t0, step, stepMin, stepH: stepMin / 60, K, t: Float64Array.from({ length: K }, (_, k) => t0 + k * step) };
+    grid.T = ZONE_IDS.map((z) => fillGaps(resample(parsed, map.temp[z], grid), 6));
+    let tout = map.outdoor ? fillGaps(resample(parsed, map.outdoor, grid), 12) : new Float64Array(K).fill(NaN);
+    const wx = map.weather ? parsed.weather[map.weather] : null;
+    if (wx) {
+      const wt = stepMeans(wx, grid, (r) => r.temp, 3 * 36e5);
+      for (let k = 0; k < K; k++) if (!isFinite(tout[k])) tout[k] = wt[k];
+    }
+    grid.tout = fillGaps(tout, 36);
+    grid.open = WINDOW_ZONES.map((z) => {
+      const ids = (map.window[z] || []).filter((id) => parsed.binary[id]);
+      const acc = new Float64Array(K);
+      for (const id of ids) {
+        const f = stepMeans(parsed.binary[id], grid, (r) => r.on, 1e15);
+        for (let k = 0; k < K; k++) if (isFinite(f[k])) acc[k] = Math.max(acc[k], f[k]);
+      }
+      return acc;
+    });
+    grid.mode = AC_ZONES.map((z) => Int8Array.from(stepAtGrid(parsed.climate[map.climate[z]] || [], grid, (r) => r.mode, 1e15), (v) => v || 0));
+    grid.set = AC_ZONES.map((z) => Float64Array.from(stepAtGrid(parsed.climate[map.climate[z]] || [], grid, (r) => r.set, 1e15), (v) => v === null ? NaN : v));
+    grid.cur = AC_ZONES.map((z) => Float64Array.from(stepAtGrid(parsed.climate[map.climate[z]] || [], grid, (r) => r.cur, 1e15), (v) => v === null ? NaN : v));
+    for (let a2 = 0; a2 < AC_ZONES.length; a2++) for (let k = 0; k < K; k++) if (grid.mode[a2][k] && !isFinite(grid.set[a2][k])) grid.mode[a2][k] = 0;
+    grid.unitsOn = Float64Array.from({ length: K }, (_, k) => grid.mode.reduce((s, m) => s + (m[k] ? 1 : 0), 0));
+    grid.heater = map.heater ? toKW(parsed, map.heater, resample(parsed, map.heater, grid, 1e15)) : new Float64Array(K);
+    for (let k = 0; k < K; k++) if (!isFinite(grid.heater[k])) grid.heater[k] = 0;
+    grid.phaseId = map.phase;
+    grid.phase = map.phase ? toKW(parsed, map.phase, resample(parsed, map.phase, grid, 1e15)) : new Float64Array(K).fill(NaN);
+    grid.others = map.phasesOther.filter((id) => id !== map.phase).map((id) => toKW(parsed, id, resample(parsed, id, grid, 1e15)));
+    grid.car = map.car ? toKW(parsed, map.car, resample(parsed, map.car, grid, 1e15)) : null;
+    const cloud = wx ? stepAtGrid(wx, grid, (r) => r.cloud, 3 * 36e5) : new Array(K).fill(null);
+    const loc = parsed.location || { lat: 51, lon: 10 };
+    grid.sol = { D: new Float64Array(K), E: new Float64Array(K), S: new Float64Array(K), W: new Float64Array(K) };
+    for (let k = 0; k < K; k++) {
+      const r = irradiance(grid.t[k] + step / 2, loc.lat, loc.lon, cloud[k]);
+      grid.sol.D[k] = r.D;
+      grid.sol.E[k] = r.E;
+      grid.sol.S[k] = r.S;
+      grid.sol.W[k] = r.W;
+    }
+    grid.hc = new Float64Array(K);
+    grid.hs = new Float64Array(K);
+    for (let k = 0; k < K; k++) {
+      const [c, s2] = hourWave(grid.t[k] + step / 2);
+      grid.hc[k] = c;
+      grid.hs[k] = s2;
+    }
+    grid.price = map.price ? parsed.num[map.price].filter((p) => isFinite(p.v)) : [];
+    grid.outdoorSeries = Array.from(grid.tout, (v, k) => ({ t: grid.t[k], v })).filter((p) => isFinite(p.v));
+    grid.valid = Uint8Array.from({ length: K }, (_, k) => grid.T.every((T) => isFinite(T[k])) && isFinite(grid.tout[k]) ? 1 : 0);
+    grid.map = map;
+    return grid;
+  }
+  function prepare(parsed, map) {
+    const m = JSON.parse(JSON.stringify(map));
+    let grid = buildGrid(parsed, m);
+    if (!m.phase && m.phasesOther.length) {
+      const p = pickPhase(grid, parsed, m);
+      if (p.id) {
+        m.phase = p.id;
+        m.phasePick = { score: p.score, how: p.how, events: p.events };
+        grid = buildGrid(parsed, m);
+      }
+    }
+    return { map: m, grid };
+  }
+
+  // src/linalg.js
+  function solveSPD(M2, b, n) {
+    const Lm = new Float64Array(n * n);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        let s = M2[i * n + j];
+        for (let k = 0; k < j; k++) s -= Lm[i * n + k] * Lm[j * n + k];
+        if (i === j) {
+          if (s <= 0 || !isFinite(s)) return null;
+          Lm[i * n + i] = Math.sqrt(s);
+        } else Lm[i * n + j] = s / Lm[j * n + j];
+      }
+    }
+    const y = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let s = b[i];
+      for (let k = 0; k < i; k++) s -= Lm[i * n + k] * y[k];
+      y[i] = s / Lm[i * n + i];
+    }
+    const x = new Float64Array(n);
+    for (let i = n - 1; i >= 0; i--) {
+      let s = y[i];
+      for (let k = i + 1; k < n; k++) s -= Lm[k * n + i] * x[k];
+      x[i] = s / Lm[i * n + i];
+    }
+    return x;
+  }
+
+  // src/fit.js
+  var FIT = { windowSteps: 72, strideSteps: 36, every: 3, sigmaT: 0.25, sigmaP: 0.3, huber: 1.5, maxIter: 30, burnInH: 36 };
+  function paramList(model) {
+    const P = [];
+    const add = (path, kind, sigma, floor) => P.push({ path, kind, sigma, floor: floor || 0 });
+    for (const z of ZONE_IDS) {
+      add(["zones", z, "Ca"], "log", 0.8);
+      add(["zones", z, "Cm"], "log", 0.7);
+      add(["zones", z, "Cw"], "log", 0.7);
+      add(["zones", z, "Ham"], "log", 0.8);
+      add(["zones", z, "Hmw"], "log", 0.8);
+      add(["zones", z, "Hwo"], "log", 0.9, 1e-3);
+      add(["zones", z, "Hwn"], "log", 1, 1e-3);
+      add(["zones", z, "H"], "log", 1, 1e-3);
+      add(["zones", z, "q"], "log", 1.2, 5e-3);
+      add(["zones", z, "qc"], "lin", 0.05);
+      add(["zones", z, "qs"], "lin", 0.05);
+    }
+    add(["building", "Tnb"], "lin", 2);
+    for (const z of WINDOW_ZONES) add(["zones", z, "Hw"], "log", 1.2, 0.01);
+    for (const z of ["office", "bedroom", "living", "bath"]) for (const f of SOLAR) add(["zones", z, "s" + f], "log", 1.5, 0.05);
+    for (const z of Object.keys(model.links)) add(["links", z], "log", 0.9, 3e-3);
+    for (const z of AC_ZONES) {
+      add(["ac", z, "Kp"], "log", 0.7);
+      add(["ac", z, "off"], "lin", 1);
+      add(["ac", z, "Qmax"], "log", 0.5);
+    }
+    add(["plant", "Qmax"], "log", 0.5);
+    add(["plant", "eta"], "log", 0.15);
+    return P;
+  }
+  var getPath = (o, p) => p.reduce((a, k) => a[k], o);
+  var setPath = (o, p, v) => {
+    const last = p[p.length - 1];
+    p.slice(0, -1).reduce((a, k) => a[k], o)[last] = v;
+  };
+  function toTheta(model, P) {
+    return Float64Array.from(P, (d) => {
+      const v = getPath(model, d.path);
+      return d.kind === "log" ? Math.log(Math.max(v, d.floor || 1e-6)) : v;
+    });
+  }
+  function fromTheta(theta, P, base) {
+    const m = JSON.parse(JSON.stringify(base));
+    P.forEach((d, i) => setPath(m, d.path, d.kind === "log" ? Math.exp(theta[i]) : theta[i]));
+    return m;
+  }
+  var quantile = (a, q) => {
+    const s = a.filter(isFinite).sort((x, y) => x - y);
+    return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : NaN;
+  };
+  var median2 = (a) => quantile(a, 0.5);
+  function powerObservation(grid) {
+    const K = grid.K, obs = new Float64Array(K).fill(NaN), ok = new Uint8Array(K), carMask = new Uint8Array(K);
+    const notes = [];
+    if (!grid.phase || !grid.phase.some(isFinite)) return { obs, ok, carMask, base: null, notes: ["No phase power assigned: the fit cannot see electricity, so efficiency and output come from the priors."] };
+    const adj = Float64Array.from(grid.phase);
+    if (grid.car) {
+      for (let k = 0; k < K; k++) if (isFinite(grid.car[k])) adj[k] -= grid.car[k] / 3;
+      notes.push("Car charging subtracted on the units' phase (a third of the charger's power).");
+    } else if (grid.others.length) {
+      const p10 = grid.others.map((o) => quantile(Array.from(o), 0.1)), pp = quantile(Array.from(grid.phase), 0.1);
+      let n = 0;
+      for (let k = 0; k < K; k++) {
+        const allUp = grid.others.every((o, i) => o[k] - p10[i] > (grid.others.length > 1 ? 1 : 2.5));
+        if (allUp && grid.phase[k] - pp > 1) {
+          for (let j = Math.max(0, k - 3); j <= Math.min(K - 1, k + 3); j++) carMask[j] = 1;
+          n++;
+        }
+      }
+      if (n) notes.push(`${Math.round(n * grid.stepMin / 60)} h of what looks like three-phase charging left out of the power fit.`);
+    }
+    const byHour = Array.from({ length: 24 }, () => []), all = [];
+    for (let k = 0; k < K; k++) {
+      if (grid.unitsOn[k] || carMask[k] || !isFinite(adj[k])) continue;
+      byHour[new Date(grid.t[k]).getHours()].push(adj[k]);
+      all.push(adj[k]);
+    }
+    const overall = all.length ? median2(all) : quantile(Array.from(adj), 0.1);
+    const base = byHour.map((a) => a.length >= 6 ? median2(a) : overall);
+    if (all.length < 72) notes.push("Few periods with all units off, so the other loads on that phase are only roughly known.");
+    for (let k = 0; k < K; k++) {
+      if (!isFinite(adj[k]) || carMask[k]) continue;
+      obs[k] = adj[k] - base[new Date(grid.t[k]).getHours()];
+      ok[k] = 1;
+    }
+    return { obs, ok, carMask, base, notes };
+  }
+  function splitDays(grid, valShare = 0.25) {
+    const perDay = Math.round(24 * 60 / grid.stepMin), days = [];
+    for (let k = 0; k + perDay <= grid.K; k++) {
+      const d = new Date(grid.t[k]);
+      if (d.getHours() !== 0 || d.getMinutes() !== 0) continue;
+      let v = 0;
+      for (let j = k; j < k + perDay; j++) v += grid.valid[j];
+      if (v >= 0.95 * perDay) days.push(k);
+    }
+    if (days.length < 2) return { train: days, val: [], perDay };
+    const nVal = Math.max(1, Math.round(days.length * valShare));
+    return { train: days.slice(0, days.length - nVal), val: days.slice(days.length - nVal), perDay };
+  }
+  function windowsFor(grid, dayStarts, perDay) {
+    const W = [], L = FIT.windowSteps, burn = Math.round(FIT.burnInH / grid.stepH);
+    for (const d of dayStarts) for (let k0 = Math.max(d, burn); k0 + L <= d + perDay; k0 += FIT.strideSteps) {
+      let ok = true;
+      for (let j = k0; j <= Math.min(grid.K - 1, k0 + L); j++) if (!grid.valid[j]) {
+        ok = false;
+        break;
+      }
+      if (ok && k0 + L < grid.K) W.push(k0);
+    }
+    return W;
+  }
+  function initialModel(grid) {
+    const model = defaultModel();
+    AC_ZONES.forEach((z, a) => {
+      const zi = ZONE_IDS.indexOf(z), d = [];
+      for (let k = 0; k < grid.K; k++) if (grid.mode[a][k] && isFinite(grid.cur[a][k]) && isFinite(grid.T[zi][k])) d.push(grid.cur[a][k] - grid.T[zi][k]);
+      if (d.length > 50) model.ac[z].off = Math.max(-3, Math.min(3, median2(d)));
+    });
+    return model;
+  }
+  function makeProblem(grid, pw, windows, P, base, theta0) {
+    const n = ZONE_IDS.length, L = FIT.windowSteps, e = FIT.every;
+    const nT = windows.length * Math.floor(L / e) * n, nP = windows.length * Math.floor(L / e), nPr = P.length;
+    const rows = nT + nP + nPr;
+    const wP = new Float64Array(nP).fill(1);
+    const T0 = new Float64Array(n), H0 = new Float64Array(2 * n);
+    const kLast = Math.min(grid.K - 1, windows[windows.length - 1] + L);
+    function residuals(theta, out) {
+      const m = compile(fromTheta(theta, P, base));
+      const hidden = estimateHidden(m, grid, 0, kLast);
+      let i = 0, ip = nT;
+      for (const k0 of windows) {
+        for (let z = 0; z < n; z++) T0[z] = grid.T[z][k0];
+        for (let j = 0; j < 2 * n; j++) H0[j] = hidden[k0 * 2 * n + j];
+        const run = runRecorded(m, grid, k0, k0 + L, T0, H0);
+        for (let j = e; j <= L; j += e) {
+          const k = k0 + j;
+          for (let z = 0; z < n; z++) {
+            const v = grid.T[z][k];
+            out[i++] = isFinite(v) ? (run.T[j * n + z] - v) / FIT.sigmaT : 0;
+          }
+        }
+        for (let j = 0; j + e <= L; j += e) {
+          let ps = 0, po = 0, ok = true;
+          for (let s = 0; s < e; s++) {
+            const k = k0 + j + s;
+            if (!pw.ok[k]) {
+              ok = false;
+              break;
+            }
+            ps += run.P[j + s];
+            po += pw.obs[k];
+          }
+          const idx = ip - nT;
+          out[ip++] = ok ? wP[idx] * (ps - po) / e / FIT.sigmaP : 0;
+        }
+      }
+      for (let p = 0; p < nPr; p++) out[nT + nP + p] = (theta[p] - theta0[p]) / P[p].sigma;
+      return out;
+    }
+    function updateWeights(r) {
+      for (let idx = 0; idx < nP; idx++) {
+        const raw = wP[idx] ? r[nT + idx] / wP[idx] : 0;
+        const a = Math.abs(raw);
+        wP[idx] = a <= FIT.huber ? 1 : Math.sqrt(FIT.huber / a);
+      }
+    }
+    return { rows, nT, nP, residuals, updateWeights };
+  }
+  var tick = () => new Promise((r) => setTimeout(r, 0));
+  async function levenberg(prob, theta0, P, onProgress) {
+    const p = theta0.length, rows = prob.rows;
+    let theta = Float64Array.from(theta0);
+    let r = prob.residuals(theta, new Float64Array(rows));
+    prob.updateWeights(r);
+    r = prob.residuals(theta, r);
+    let cost = dot(r, r), lambda = 0.01;
+    const J = new Float64Array(rows * p), rp = new Float64Array(rows);
+    const history = [cost];
+    for (let it = 0; it < FIT.maxIter; it++) {
+      for (let c = 0; c < p; c++) {
+        const h2 = P[c].kind === "log" ? 1e-3 : 1e-3;
+        const th = Float64Array.from(theta);
+        th[c] += h2;
+        prob.residuals(th, rp);
+        for (let i = 0; i < rows; i++) J[i * p + c] = (rp[i] - r[i]) / h2;
+        if (c % 10 === 9) {
+          onProgress && onProgress({ stage: "fit", iter: it, cost, frac: (it + c / p) / FIT.maxIter });
+          await tick();
+        }
+      }
+      const A = new Float64Array(p * p), g = new Float64Array(p);
+      for (let i = 0; i < rows; i++) {
+        const ri = r[i], o = i * p;
+        for (let a = 0; a < p; a++) {
+          const ja = J[o + a];
+          if (ja === 0) continue;
+          g[a] += ja * ri;
+          for (let b = a; b < p; b++) A[a * p + b] += ja * J[o + b];
+        }
+      }
+      for (let a = 0; a < p; a++) for (let b = 0; b < a; b++) A[a * p + b] = A[b * p + a];
+      let accepted = false;
+      for (let tries = 0; tries < 10 && !accepted; tries++) {
+        const M2 = Float64Array.from(A);
+        for (let a = 0; a < p; a++) M2[a * p + a] += lambda * Math.max(A[a * p + a], 1e-9);
+        const step = solveSPD(M2, g.map((v) => -v), p);
+        if (!step) {
+          lambda *= 10;
+          continue;
+        }
+        const th = theta.map((v, i) => v + Math.max(-1, Math.min(1, step[i])));
+        prob.residuals(th, rp);
+        const c2 = dot(rp, rp);
+        if (c2 < cost) {
+          theta = th;
+          r.set(rp);
+          accepted = cost - c2;
+          cost = c2;
+          lambda = Math.max(1e-7, lambda / 3);
+        } else lambda *= 4;
+      }
+      prob.updateWeights(r);
+      prob.residuals(theta, r);
+      cost = dot(r, r);
+      history.push(cost);
+      onProgress && onProgress({ stage: "fit", iter: it + 1, cost, frac: (it + 1) / FIT.maxIter });
+      await tick();
+      if (!accepted || accepted < 1e-5 * cost) break;
+    }
+    return { theta, cost, history };
+  }
+  function dot(a, b) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+  function freeRun(model, grid, k0, steps) {
+    const m = compile(model), n = ZONE_IDS.length;
+    const hidden = estimateHidden(m, grid, 0, k0);
+    const T0 = Float64Array.from(ZONE_IDS, (z, i) => grid.T[i][k0]);
+    return runRecorded(m, grid, k0, Math.min(grid.K - 1, k0 + steps), T0, hidden.subarray(k0 * 2 * n, (k0 + 1) * 2 * n));
+  }
+  function dayErrors(model, grid, pw, k0, perDay) {
+    const run = freeRun(model, grid, k0, perDay), n = ZONE_IDS.length;
+    const se = new Float64Array(n), bias = new Float64Array(n), cnt = new Float64Array(n);
+    for (let j = 1; j <= perDay && k0 + j < grid.K; j++) for (let z = 0; z < n; z++) {
+      const v = grid.T[z][k0 + j];
+      if (!isFinite(v)) continue;
+      const d = run.T[j * n + z] - v;
+      se[z] += d * d;
+      bias[z] += d;
+      cnt[z]++;
+    }
+    let es = 0, eo = 0;
+    for (let j = 0; j < perDay && k0 + j < grid.K; j++) if (pw.ok[k0 + j]) {
+      es += run.P[j] * grid.stepH;
+      eo += pw.obs[k0 + j] * grid.stepH;
+    }
+    return { rmse: Array.from(se, (s, z) => Math.sqrt(s / Math.max(1, cnt[z]))), bias: Array.from(bias, (s, z) => s / Math.max(1, cnt[z])), energySim: es, energyObs: eo, run };
+  }
+  async function train(grid, opts = {}) {
+    const onProgress = opts.onProgress;
+    const pw = powerObservation(grid);
+    const split = splitDays(grid, opts.valShare ?? 0.25);
+    const warnings = pw.notes.slice();
+    if (!split.train.length) throw new Error("Not enough complete days of room temperatures to train on.");
+    if (!split.val.length) warnings.push("Only one complete day: the check below uses the same day the model was trained on.");
+    if (!grid.heater.some((v) => v > 0.1)) warnings.push("No heater power: absolute heat capacities lean on the priors.");
+    if (!grid.mode.some((m) => m.some((v) => v))) warnings.push("No unit was ever in heat or cool mode in this data.");
+    const windows = windowsFor(grid, split.train, split.perDay);
+    if (windows.length < 4) throw new Error("Too few gap-free six-hour stretches to train on.");
+    const base = opts.initial || initialModel(grid);
+    const P = paramList(base);
+    const theta0 = toTheta(base, P);
+    const prob = makeProblem(grid, pw, windows, P, base, theta0);
+    onProgress && onProgress({ stage: "start", windows: windows.length, params: P.length });
+    const res = await levenberg(prob, theta0, P, onProgress);
+    const model = fromTheta(res.theta, P, base);
+    const evalDays = (days) => days.map((k0) => ({ k0, t0: grid.t[k0], ...dayErrors(model, grid, pw, k0, split.perDay) }));
+    const train2 = evalDays(split.train), val = split.val.length ? evalDays(split.val) : evalDays(split.train.slice(-1));
+    const agg = (list) => ZONE_IDS.map((z, i) => Math.sqrt(list.reduce((s, d) => s + d.rmse[i] ** 2, 0) / Math.max(1, list.length)));
+    const report = {
+      trainedAt: Date.now(),
+      range: { start: grid.t[0], end: grid.t[grid.K - 1] },
+      days: { train: split.train.map((k) => grid.t[k]), val: split.val.map((k) => grid.t[k]) },
+      windows: windows.length,
+      cost: res.cost,
+      costHistory: res.history,
+      rmseTrain: agg(train2),
+      rmseVal: agg(val),
+      energy: { sim: val.reduce((s, d) => s + d.energySim, 0), obs: val.reduce((s, d) => s + d.energyObs, 0), observed: pw.ok.some((v) => v) },
+      cop7: model.plant.eta * carnotHeat(21, 7),
+      zones: Object.fromEntries(ZONE_IDS.map((z) => [z, zoneSummary(model, z)])),
+      warnings
+    };
+    return { model, report, pw, split, validation: val };
+  }
+
+  // src/flatsim.js
+  var MIN4 = 6e4;
+  function parseWindows(s) {
+    return String(s || "").split(",").map((p) => p.trim().match(/^(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})$/)).filter(Boolean).map((m) => [+m[1] * 60 + +m[2], +m[3] * 60 + +m[4]]);
+  }
+  function simulateDay(model, grid, k0, opts) {
+    const m = compile(model), n = m.n, nA = AC_ZONES.length;
+    const hidden = estimateHidden(m, grid, 0, k0);
+    const Ta0 = Float64Array.from(ZONE_IDS, (z, i) => isFinite(grid.T[i][k0]) ? grid.T[i][k0] : 20);
+    const S = newState(m, Ta0, hidden.subarray(k0 * 2 * n, (k0 + 1) * 2 * n));
+    const t0 = grid.t[k0], minutes = Math.round((opts.hours || 24) * 60);
+    const kEnd = Math.min(grid.K - 1, k0 + Math.round(minutes / grid.stepMin));
+    const t1 = Math.min(t0 + minutes * MIN4, grid.t[kEnd]);
+    const price = opts.price && opts.price.length ? opts.price : grid.price;
+    const ctx = dayContext(price, grid.outdoorSeries, t0, t1);
+    const ctl = {};
+    for (const z of AC_ZONES) {
+      const u2 = opts.units[z];
+      if (u2 && u2.kind === "blueprint") ctl[z] = controller(u2.P, t0);
+    }
+    const heater = opts.heater || { kind: "recorded" };
+    const hw = heater.kind === "thermostat" ? parseWindows(heater.windows) : [];
+    const hkw = heater.kw || Math.max(1, ...Array.from(grid.heater).filter(isFinite)) || 2;
+    let heaterOn = false;
+    const sub = substepsFor(m, 1 / 60), dt = 1 / 60 / sub;
+    const u = inputBuffer(m), Q = new Float64Array(nA);
+    const rows = [];
+    let energy = 0, cost = 0, hEnergy = 0, hCost = 0;
+    for (let t = t0; t < t1; t += MIN4) {
+      const f = (t - t0) / grid.step, k = Math.min(kEnd - 1, k0 + Math.floor(f)), w = f - Math.floor(f);
+      const lerp = (a) => isFinite(a[k + 1]) ? a[k] + (a[k + 1] - a[k]) * w : a[k];
+      u.tout = lerp(grid.tout);
+      for (let i = 0; i < u.open.length; i++) u.open[i] = grid.open[i][k];
+      u.sol.D = lerp(grid.sol.D);
+      u.sol.E = lerp(grid.sol.E);
+      u.sol.S = lerp(grid.sol.S);
+      u.sol.W = lerp(grid.sol.W);
+      [u.hc, u.hs] = hourWave(t);
+      const p = stepAt(price, t);
+      const unit = [];
+      for (let a = 0; a < nA; a++) {
+        const z = AC_ZONES[a], zi = ZONE_IDS.indexOf(z), spec = opts.units[z] || { kind: "recorded" };
+        if (spec.kind === "blueprint") {
+          const x = ctx.at(spec.P, t);
+          x.indoor = Math.round(S[zi] * 10) / 10;
+          const wi = WINDOW_ZONES.indexOf(z);
+          x.windowOpen = wi >= 0 && u.open[wi] > 0;
+          const d = ctl[z].step(t, x);
+          u.mode[a] = ctl[z].mode === "heat" ? 1 : ctl[z].mode === "cool" ? 2 : 0;
+          u.set[a] = ctl[z].setpoint ?? 20;
+          unit.push({ mode: ctl[z].mode, target: d.target, setpoint: ctl[z].setpoint, d, x });
+        } else {
+          u.mode[a] = grid.mode[a][k];
+          u.set[a] = grid.set[a][k];
+          unit.push({ mode: ["off", "heat", "cool", "auto"][u.mode[a]], target: isFinite(u.set[a]) ? u.set[a] : null, setpoint: u.set[a], d: null });
+        }
+      }
+      if (heater.kind === "recorded") u.heater = grid.heater[k];
+      else if (heater.kind === "off") u.heater = 0;
+      else {
+        const dd = new Date(t), mm = dd.getHours() * 60 + dd.getMinutes();
+        const inWin = hw.some(([a, b]) => a <= b ? mm >= a && mm < b : mm >= a || mm < b);
+        heaterOn = inWin && (heaterOn ? S[BATH] < heater.set + 0.5 : S[BATH] < heater.set);
+        u.heater = heaterOn ? hkw : 0;
+      }
+      let pel = 0;
+      const qs = new Float64Array(nA);
+      for (let s = 0; s < sub; s++) {
+        pel += advance(m, S, u, dt, Q) / sub;
+        for (let a = 0; a < nA; a++) qs[a] += Q[a] / sub;
+      }
+      energy += pel / 60;
+      hEnergy += u.heater / 60;
+      if (p !== null) {
+        cost += pel / 60 * p;
+        hCost += u.heater / 60 * p;
+      }
+      for (let a = 0; a < nA; a++) unit[a].Q = qs[a];
+      rows.push({ t, Ta: Float64Array.from(S.subarray(0, n)), unit, heater: u.heater, pel, price: p, tout: u.tout, open: Array.from(u.open), k });
+    }
+    const minT = ZONE_IDS.map((z, i) => Math.min(...rows.map((r) => r.Ta[i])));
+    const maxT = ZONE_IDS.map((z, i) => Math.max(...rows.map((r) => r.Ta[i])));
+    return { rows, energy, cost, avgPrice: energy > 0 ? cost / energy : null, heaterEnergy: hEnergy, heaterCost: hCost, minT, maxT, intervalMin: ctx.intervalMin, ctx };
+  }
+
+  // src/synthetic.js
+  var MIN5 = 6e4;
+  var HOUR3 = 36e5;
+  function rng(seed) {
+    let a = seed >>> 0;
+    const next = () => {
+      a = a + 1831565813 >>> 0;
+      let t = a;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+    next.normal = () => {
+      const u = Math.max(1e-12, next()), v = next();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    };
+    return next;
+  }
+  var SYNTHETIC_INSTANCES = {
+    office: { heat_comfort: 21, heat_charge: 23, heat_coast: 19.5 },
+    bedroom: { heat_comfort: 19.5, heat_charge: 21, heat_coast: 18 },
+    living: { heat_comfort: 21.5, heat_charge: 23.5, heat_coast: 20 }
+  };
+  var NAMES = {
+    office: ["buero", "B\xFCro"],
+    bedroom: ["schlafzimmer", "Schlafzimmer"],
+    living: ["wohnzimmer", "Wohnzimmer"],
+    bath: ["bad", "Bad"],
+    hall: ["flur", "Flur"]
+  };
+  function syntheticRun(opts = {}) {
+    const days = opts.days || 14, R = rng(opts.seed || 1);
+    const lat = opts.lat ?? 49.5, lon = opts.lon ?? 8.5;
+    const start = opts.start ?? new Date(2026, 9, 6).getTime();
+    const end = start + days * 24 * HOUR3;
+    const model = opts.model || defaultModel();
+    const m = compile(model), sub = substepsFor(m, 1 / 60);
+    const hours = days * 24 + 48;
+    const cloud = [], base = [];
+    let c = 0.6, lvl = opts.meanOutdoor ?? 7;
+    for (let h2 = 0; h2 < hours; h2++) {
+      if (R() < 0.15) c = Math.min(1, Math.max(0, c + (R() - 0.5) * 0.9));
+      if (h2 % 24 === 0) lvl += R.normal() * 1.5 - (lvl - (opts.meanOutdoor ?? 7)) * 0.3;
+      cloud.push(c);
+      base.push(lvl);
+    }
+    const tAt = (t) => {
+      const h2 = (t - start) / HOUR3;
+      return Math.max(0, Math.min(hours - 1, Math.floor(h2)));
+    };
+    const outdoorTrue = (t) => {
+      const h2 = tAt(t), hod = new Date(t).getHours() + new Date(t).getMinutes() / 60;
+      const amp = 2 + 3.5 * (1 - cloud[h2]);
+      const x = (t - start) / HOUR3 - 12, d0 = Math.floor(x / 24), f = x / 24 - d0;
+      const lv = (i) => base[Math.max(0, Math.min(hours - 1, i * 24))];
+      return lv(d0) + (lv(d0 + 1) - lv(d0)) * f + amp * Math.cos((hod - 15) / 24 * 2 * Math.PI);
+    };
+    const price = [];
+    for (let t = start - 24 * HOUR3; t < end + 48 * HOUR3; t += 15 * MIN5) {
+      const d = new Date(t), hod = d.getHours() + d.getMinutes() / 60, day = Math.floor((t - start) / (24 * HOUR3));
+      const level = 0.27 + 0.03 * Math.sin(day * 1.7);
+      const g = (mu, s) => Math.exp(-0.5 * ((hod - mu) / s) ** 2);
+      const cl = cloud[Math.max(0, Math.min(hours - 1, tAt(start + day * 24 * HOUR3 + 13 * HOUR3)))];
+      price.push({ t, v: +(level + 0.07 * g(8, 1.3) + 0.11 * g(18.7, 1.6) - 0.03 * g(3, 2) - 0.09 * (1 - cl) * g(13, 2.2) + 4e-3 * R.normal()).toFixed(4) });
+    }
+    const outdoorSeries = [];
+    for (let t = start - 24 * HOUR3; t < end + 48 * HOUR3; t += 10 * MIN5) outdoorSeries.push({ t, v: outdoorTrue(t) });
+    const ctx = dayContext(price, outdoorSeries, start, end);
+    const plan = [];
+    for (let d = 0; d < days; d++) {
+      const weekday = new Date(start + d * 24 * HOUR3).getDay();
+      plan.push({
+        airing: { office: R() < 0.8 ? 7.5 + R() * 0.5 : null, bedroom: R() < 0.9 ? 7 + R() * 0.5 : null, living: R() < 0.5 ? 12 + R() : null },
+        airingLen: { office: 8 + R() * 6, bedroom: 10 + R() * 10, living: 8 + R() * 10 },
+        cook: R() < 0.8 ? 18.2 + R() * 0.8 : null,
+        lunch: weekday === 0 || weekday === 6 ? 12.3 : null,
+        car: R() < 0.3 ? 19 + R() * 2 : null,
+        carLen: 2 + R() * 2,
+        work: weekday >= 1 && weekday <= 5
+      });
+    }
+    const inst = Object.fromEntries(AC_ZONES.map((z) => [z, Object.assign({}, BLUEPRINT_DEFAULTS, (opts.instances || SYNTHETIC_INSTANCES)[z] || {})]));
+    const ctl = Object.fromEntries(AC_ZONES.map((z) => [z, controller(inst[z], start)]));
+    const S = newState(m, ZONE_IDS.map((z) => z === "bedroom" ? 19.5 : z === "bath" ? 21 : 20.5));
+    const T = S;
+    const real = opts.realism === true ? { cycle: 1, people: 1 } : opts.realism || {}, n = m.n;
+    const cycling = new Uint8Array(AC_ZONES.length);
+    const u = { tout: 0, open: new Float64Array(WINDOW_ZONES.length), sol: null, heater: 0, mode: new Int8Array(AC_ZONES.length), set: new Float64Array(AC_ZONES.length) };
+    const Q = new Float64Array(AC_ZONES.length);
+    let heaterOn = false;
+    const rec = { t: [], T: [], tout: [], open: [], heater: [], mode: [], set: [], Q: [], pel: [], cloud: [], L1: [], L2: [], L3: [], car: [] };
+    for (let t = start; t < end; t += MIN5) {
+      const d = Math.floor((t - start) / (24 * HOUR3)), dp = plan[d], dt = new Date(t), hod = dt.getHours() + dt.getMinutes() / 60;
+      const open = WINDOW_ZONES.map((z) => dp.airing[z] !== null && hod >= dp.airing[z] && hod < dp.airing[z] + dp.airingLen[z] / 60 ? 1 : 0);
+      for (let a = 0; a < AC_ZONES.length; a++) {
+        const z = AC_ZONES[a], zi = ZONE_IDS.indexOf(z), x = ctx.at(inst[z], t);
+        x.indoor = Math.round(T[zi] * 10) / 10;
+        x.windowOpen = open[WINDOW_ZONES.indexOf(z)] > 0;
+        ctl[z].step(t, x);
+        u.mode[a] = ctl[z].mode === "heat" ? 1 : ctl[z].mode === "cool" ? 2 : 0;
+        u.set[a] = ctl[z].setpoint ?? 20;
+        if (real.cycle && u.mode[a] === 1) {
+          const sensed = T[zi] + m.off[a], dem = m.Kp[a] * (u.set[a] - sensed), floor = 0.35 * m.Qmax[a];
+          if (dem < floor) {
+            if (cycling[a] && sensed > u.set[a] + 0.5) cycling[a] = 0;
+            else if (!cycling[a] && sensed < u.set[a] - 0.3) cycling[a] = 1;
+            u.set[a] = cycling[a] ? sensed + floor / m.Kp[a] : sensed - 1;
+          } else cycling[a] = 1;
+        }
+      }
+      const bathTime = hod >= 6 && hod < 7.5 || hod >= 19 && hod < 21.5;
+      const tb = T[ZONE_IDS.indexOf("bath")];
+      heaterOn = bathTime && (heaterOn ? tb < 23 : tb < 22.5);
+      u.heater = heaterOn ? 2 : 0;
+      u.tout = outdoorTrue(t);
+      [u.hc, u.hs] = hourWave(t);
+      const h2 = tAt(t);
+      u.sol = irradiance(t + 3e4, lat, lon, cloud[h2]);
+      for (let w = 0; w < open.length; w++) u.open[w] = open[w];
+      const cooking = dp.cook !== null && hod >= dp.cook && hod < dp.cook + 0.6 || dp.lunch !== null && hod >= dp.lunch && hod < dp.lunch + 0.5;
+      const Tl = ZONE_IDS.indexOf("living");
+      let pel = 0;
+      for (let i = 0; i < sub; i++) pel += advance(m, S, u, 1 / 60 / sub, Q) / sub;
+      if (cooking) S[Tl] += 0.6 * (1 / 60) / m.Ca[Tl];
+      if (real.people) {
+        const night = hod < 7 || hod >= 23, people = { bedroom: night ? 0.12 : 0, office: dp.work && hod >= 8.5 && hod < 17.5 ? 0.1 : 0, living: !night && hod >= 17 ? 0.15 : 0.03 };
+        for (const z in people) {
+          const zi = ZONE_IDS.indexOf(z);
+          S[zi] += people[z] / 60 / m.Ca[zi];
+        }
+      }
+      const carKW = dp.car !== null && hod >= dp.car && hod < dp.car + dp.carLen ? 11 : 0;
+      const office = 0.05 + (dp.work && hod >= 8.5 && hod < 17.5 ? 0.18 : 0) + 0.02 * R.normal();
+      const stove = cooking ? 1.6 : 0;
+      rec.t.push(t);
+      rec.T.push(Array.from(S.subarray(0, m.n)));
+      rec.tout.push(u.tout);
+      rec.open.push(open);
+      rec.heater.push(u.heater);
+      rec.mode.push(Array.from(u.mode));
+      rec.set.push(Array.from(u.set));
+      rec.Q.push(Array.from(Q));
+      rec.pel.push(pel);
+      rec.cloud.push(cloud[h2]);
+      rec.car.push(carKW);
+      rec.L1.push(0.15 + 0.03 * R.normal() + stove * 0.5 + carKW / 3 + (hod > 18 && hod < 23 ? 0.1 : 0));
+      rec.L2.push(pel + office + 0.04 + 0.015 * R.normal() + stove * 0.5 + carKW / 3);
+      rec.L3.push(0.12 + 0.03 * R.normal() + carKW / 3);
+    }
+    return { rec, price, model, inst, lat, lon, start, end, R };
+  }
+  function toExport(run) {
+    const { rec, price, lat, lon, R } = run;
+    const iso = (t) => new Date(t).toISOString();
+    const meta = {}, s5 = {}, hist = {};
+    const mean5 = (id, get) => {
+      const rows = [];
+      for (let i = 0; i + 5 <= rec.t.length; i += 5) {
+        let a = 0;
+        for (let j = i; j < i + 5; j++) a += get(j);
+        rows.push([rec.t[i], +(a / 5).toFixed(3)]);
+      }
+      s5[id] = rows;
+    };
+    const q = (v, step) => Math.round(v / step) * step;
+    ZONE_IDS.forEach((z, zi) => {
+      const id = `sensor.${NAMES[z][0]}_temperatur`;
+      meta[id] = { name: `${NAMES[z][1]} Temperatur`, device_class: "temperature", unit: "\xB0C", area: NAMES[z][1], device: "dev_t_" + z };
+      const bias = 0.05 * R.normal();
+      mean5(id, (j) => q(rec.T[j][zi] + bias + 0.03 * R.normal(), 0.1));
+    });
+    meta["sensor.balkon_temperatur"] = { name: "Balkon Temperatur", device_class: "temperature", unit: "\xB0C", area: null, device: "dev_out" };
+    mean5("sensor.balkon_temperatur", (j) => q(rec.tout[j] + 0.1 * R.normal(), 0.1));
+    for (const [id, key] of [["sensor.phase_l1_leistung", "L1"], ["sensor.phase_l2_leistung", "L2"], ["sensor.phase_l3_leistung", "L3"]]) {
+      meta[id] = { name: `Phase ${key} Leistung`, device_class: "power", unit: "W", area: null, device: "dev_meter" };
+      mean5(id, (j) => Math.max(0, rec[key][j]) * 1e3);
+    }
+    meta["sensor.bad_heizluefter_leistung"] = { name: "Bad Heizl\xFCfter Leistung", device_class: "power", unit: "W", area: "Bad", device: "dev_plug" };
+    mean5("sensor.bad_heizluefter_leistung", (j) => rec.heater[j] * 1e3 + (rec.heater[j] ? 5 * R.normal() : 0));
+    AC_ZONES.forEach((z, a) => {
+      const id = `climate.${NAMES[z][0]}_klima`, zi = ZONE_IDS.indexOf(z);
+      meta[id] = { name: `${NAMES[z][1]} Klima`, device_class: null, unit: null, area: NAMES[z][1], device: "dev_ac_" + z, hvac_modes: ["off", "heat", "cool", "dry", "fan_only"], min_temp: 16, max_temp: 31, step: 0.5 };
+      const own = `sensor.${NAMES[z][0]}_klima_innentemperatur`;
+      meta[own] = { name: `${NAMES[z][1]} Klima Innentemperatur`, device_class: "temperature", unit: "\xB0C", area: NAMES[z][1], device: "dev_ac_" + z };
+      mean5(own, (j) => q(rec.T[j][zi] + run.model.ac[z].off, 0.5));
+      const rows = [];
+      let last = "";
+      for (let j = 0; j < rec.t.length; j++) {
+        const mode2 = ["off", "heat", "cool"][rec.mode[j][a]] || "off";
+        const cur = q(rec.T[j][zi] + run.model.ac[z].off + 0.1 * R.normal(), 0.5);
+        const action = mode2 === "off" ? "off" : Math.abs(rec.Q[j][a]) > 0.05 ? mode2 === "heat" ? "heating" : "cooling" : "idle";
+        const row = [mode2, rec.set[j][a], cur, action];
+        const key = row.join("|");
+        if (key !== last) {
+          rows.push([iso(rec.t[j] + 2e3), mode2, rec.set[j][a], cur, action, "auto"]);
+          last = key;
+        }
+      }
+      hist[id] = rows;
+    });
+    WINDOW_ZONES.forEach((z, w) => {
+      const id = `binary_sensor.${NAMES[z][0]}_balkontuer`;
+      meta[id] = { name: `${NAMES[z][1]} Balkont\xFCr`, device_class: "door", unit: null, area: NAMES[z][1], device: "dev_w_" + z };
+      const rows = [];
+      let last = null;
+      for (let j = 0; j < rec.t.length; j++) {
+        const s = rec.open[j][w] ? "on" : "off";
+        if (s !== last) {
+          rows.push([iso(rec.t[j]), s]);
+          last = s;
+        }
+      }
+      hist[id] = rows;
+    });
+    meta["binary_sensor.wohnungstuer"] = { name: "Wohnungst\xFCr", device_class: "door", unit: null, area: "Flur", device: "dev_door" };
+    hist["binary_sensor.wohnungstuer"] = [[iso(rec.t[0]), "off"]];
+    meta["weather.forecast_home"] = { name: "Forecast Home", device_class: null, unit: null, area: null };
+    hist["weather.forecast_home"] = [];
+    for (let j = 0; j < rec.t.length; j += 60) hist["weather.forecast_home"].push([iso(rec.t[j]), rec.cloud[j] > 0.7 ? "cloudy" : "partlycloudy", +rec.tout[j].toFixed(1), Math.round(rec.cloud[j] * 100)]);
+    meta["sensor.zuhause_strompreis"] = { name: "Zuhause Strompreis", device_class: "monetary", unit: "EUR/kWh", area: null, device: "dev_tibber" };
+    hist["sensor.zuhause_strompreis"] = price.map((p) => [iso(p.t), p.v]);
+    meta["sensor.zuhause_price_next_2h"] = { name: "\u2300 Price Next 2h", device_class: "monetary", unit: "EUR/kWh", area: null, device: "dev_tibber" };
+    hist["sensor.zuhause_price_next_2h"] = price.slice(0, 20).map((p) => [iso(p.t), p.v]);
+    meta["person.felix"] = { name: "Felix", device_class: null, unit: null, area: null };
+    hist["person.felix"] = [[iso(rec.t[0]), "home"]];
+    return {
+      exported: iso(rec.t[rec.t.length - 1]),
+      ha_version: "synthetic",
+      location: { lat: Math.round(lat * 10) / 10, lon: Math.round(lon * 10) / 10, tz: "Europe/Berlin" },
+      meta,
+      stats_5min: s5,
+      stats_hourly: {},
+      history: hist
+    };
+  }
+
+  // ui/flat.js
+  var LABEL = Object.fromEntries(ZONES.map((z) => [z.id, z.label]));
+  var clone = (o) => JSON.parse(JSON.stringify(o));
+  var median3 = (a) => {
+    const s = a.filter(isFinite).sort((x, y) => x - y);
+    return s.length ? s[s.length >> 1] : NaN;
+  };
+  var AUTUMN = [0.27, 0.265, 0.26, 0.26, 0.265, 0.28, 0.31, 0.34, 0.345, 0.32, 0.28, 0.24, 0.21, 0.195, 0.2, 0.23, 0.27, 0.32, 0.37, 0.38, 0.35, 0.32, 0.3, 0.285];
+  function createFlatView({ form: form2 }) {
+    const saved = store.get("acs-flat-v1") || {};
+    const units = Object.fromEntries(AC_ZONES.map((z) => [z, Object.assign({}, BLUEPRINT_DEFAULTS, SYNTHETIC_INSTANCES[z], (saved.units || {})[z] || {})]));
+    let unit = AC_ZONES.includes(saved.unit) ? saved.unit : AC_ZONES[0];
+    let baseKind = saved.base || "recorded";
+    let pinned = saved.pinned || null;
+    const heater = Object.assign({ kind: "recorded", set: 22.5, windows: "06:00-07:30, 19:00-21:30" }, saved.heater || {});
+    let trained = store.get("acs-flat-model-v1");
+    let model = trained && trained.model && trained.model.version === defaultModel().version ? trained.model : defaultModel();
+    if (trained && model !== trained.model) trained = null;
+    let lastTrain = null, dataset = null, RES = null, BRES = null, RANGE = null, GEO = [], active = false, pending = false, busy = false;
+    const persist = () => store.set("acs-flat-v1", { units, unit, base: baseKind, pinned, heater });
+    const stage = $("stage");
+    const hv = hover({ stage, tip: $("tip"), charts: () => GEO, count: () => RES ? RES.rows.length : 0, start: () => RANGE.start, fill: (i, tip) => fillTip(i, tip) });
+    function useDataset(ds) {
+      dataset = ds;
+      const g = ds.grid;
+      const raw = g.price || [];
+      ds.scale = median3(raw.map((p) => p.v)) > 3 ? 100 : 1;
+      ds.price = ds.scale === 100 ? raw.map((p) => ({ t: p.t, v: p.v / 100 })) : raw;
+      ds.pw = powerObservation(g);
+      ds.days = [];
+      const perDay = Math.round(24 * 60 / g.stepMin);
+      for (let k = 0; k + perDay < g.K; k++) {
+        const d = new Date(g.t[k]);
+        if (d.getHours() || d.getMinutes()) continue;
+        let v = 0;
+        for (let j = k; j < k + perDay; j++) v += g.valid[j];
+        if (v >= 0.9 * perDay) ds.days.push(k);
+      }
+      if (!ds.days.length) ds.days.push(0);
+      const daySel = $("f-day");
+      daySel.textContent = "";
+      for (const k of ds.days) daySel.appendChild(h("option", { value: k, text: dayLabel(g.t[k]) + (k === 0 ? " (start of data)" : "") }));
+      daySel.value = ds.days[ds.days.length - 1];
+      renderModelInfo();
+      schedule();
+    }
+    function exampleDataset() {
+      const start = dayStart(Date.now()) - 4 * 24 * HOUR;
+      const instances = Object.fromEntries(AC_ZONES.map((z) => [z, Object.assign({}, SYNTHETIC_INSTANCES[z], { use_near: false })]));
+      const run2 = syntheticRun({ days: 4, seed: 11, start, model: defaultModel(), instances });
+      const parsed = parseExport(toExport(run2));
+      const { map, grid } = prepare(parsed, guessMapping(parsed));
+      return { kind: "example", label: "made-up example days", parsed, map, grid };
+    }
+    function loadExport(text2, label) {
+      const msg = $("f-trainmsg");
+      try {
+        const parsed = parseExport(text2);
+        let map = guessMapping(parsed);
+        if (trained && trained.map) map = mergeMap(map, trained.map, parsed);
+        const prep = prepare(parsed, map);
+        useDataset({ kind: "export", label, parsed, map: prep.map, grid: prep.grid });
+        renderMapping();
+        $("f-train").hidden = false;
+        msg.hidden = true;
+      } catch (e) {
+        msg.hidden = false;
+        msg.className = "notice err";
+        msg.textContent = "Could not use that file: " + e.message;
+      }
+    }
+    function mergeMap(guess, savedMap, parsed) {
+      const has = (id) => !id || parsed.num[id] || parsed.climate[id] || parsed.binary[id] || parsed.weather[id];
+      const m = clone(guess);
+      for (const z of ZONE_IDS) if (savedMap.temp && has(savedMap.temp[z])) m.temp[z] = savedMap.temp[z];
+      for (const z of AC_ZONES) if (savedMap.climate && has(savedMap.climate[z])) m.climate[z] = savedMap.climate[z];
+      for (const z of WINDOW_ZONES) if (savedMap.window && (savedMap.window[z] || []).every(has)) m.window[z] = savedMap.window[z];
+      for (const k of ["outdoor", "heater", "phase", "car", "price", "weather"]) if (savedMap[k] !== void 0 && has(savedMap[k])) m[k] = savedMap[k];
+      return m;
+    }
+    function remap() {
+      try {
+        const prep = prepare(dataset.parsed, dataset.map);
+        dataset.map = prep.map;
+        useDataset(Object.assign(dataset, { grid: prep.grid }));
+        $("f-trainmsg").hidden = true;
+      } catch (e) {
+        const msg = $("f-trainmsg");
+        msg.hidden = false;
+        msg.className = "notice err";
+        msg.textContent = e.message;
+      }
+    }
+    function renderMapping() {
+      const outer = $("f-mapping");
+      outer.textContent = "";
+      outer.hidden = false;
+      const box = h("div", { class: "body-inner" });
+      outer.append(h("details", { class: "roles", open: !(trained && trained.map) }, h("summary", { text: "Which sensor is what" }), box));
+      const p = dataset.parsed, map = dataset.map;
+      const name = (id) => (p.meta[id] || {}).name || id;
+      const opt = (id, label) => h("option", { value: id, text: label || name(id) + " \xB7 " + id });
+      const nums = Object.keys(p.num), unitOf2 = (id) => (p.meta[id] || {}).unit || "";
+      const temps = nums.filter((id) => /°/.test(unitOf2(id)) || (p.meta[id] || {}).device_class === "temperature");
+      const powers = nums.filter((id) => /^k?w$/i.test(unitOf2(id)) || (p.meta[id] || {}).device_class === "power");
+      const prices = nums.filter((id) => /\/\s*kwh/i.test(unitOf2(id)));
+      const sel = (label, value, options, set) => {
+        const id = "f-map-" + label.replace(/\W+/g, "-").toLowerCase();
+        const s = h("select", { id, onchange: (e) => {
+          set(e.target.value);
+          remap();
+        } }, options);
+        s.value = value || "";
+        return h("div", { class: "field stack" }, h("label", { for: id, text: label }), s);
+      };
+      box.append(h("p", { class: "hint", text: "Check what plays which role. Guesses come from areas and names." }));
+      for (const z of ZONE_IDS) box.append(sel(LABEL[z] + " thermometer", map.temp[z], [opt("", "(none)"), ...temps.map((i) => opt(i))], (v) => {
+        map.temp[z] = v;
+      }));
+      box.append(sel("Outdoor temperature", map.outdoor, [opt("", "(weather entity)"), ...temps.map((i) => opt(i))], (v) => {
+        map.outdoor = v;
+      }));
+      for (const z of AC_ZONES) box.append(sel(LABEL[z] + " unit", map.climate[z], [opt("", "(none)"), ...Object.keys(p.climate).map((i) => opt(i))], (v) => {
+        map.climate[z] = v;
+      }));
+      for (const z of WINDOW_ZONES) {
+        const cur = map.window[z] || [];
+        const options = [opt("", "(none)"), ...Object.keys(p.binary).map((i) => opt(i))];
+        if (cur.length > 1) options.push(opt("__multi", cur.length + " sensors, as found"));
+        box.append(sel(LABEL[z] + " door or window", cur.length > 1 ? "__multi" : cur[0] || "", options, (v) => {
+          if (v !== "__multi") map.window[z] = v ? [v] : [];
+        }));
+      }
+      box.append(sel("Bath heater power", map.heater, [opt("", "(none)"), ...powers.map((i) => opt(i))], (v) => {
+        map.heater = v;
+      }));
+      box.append(sel("Phase with the outdoor unit", map.phase, [opt("", "(pick from the data)"), ...powers.map((i) => opt(i))], (v) => {
+        map.phase = v;
+        delete map.phasePick;
+      }));
+      box.append(sel("Car charger power", map.car, [opt("", "(none)"), ...powers.map((i) => opt(i))], (v) => {
+        map.car = v;
+      }));
+      box.append(sel("Electricity price", map.price, [opt("", "(none)"), ...prices.map((i) => opt(i))], (v) => {
+        map.price = v;
+      }));
+      box.append(sel("Weather", map.weather, [opt("", "(none)"), ...Object.keys(p.weather).map((i) => opt(i))], (v) => {
+        map.weather = v;
+      }));
+      if (map.phasePick) box.append(h("p", { class: "hint", text: map.phasePick.how === "jump" ? "Picked from the data: this phase jumps most clearly when a unit switches on (" + map.phasePick.events + " switch-ons). Choose it yourself if that is wrong." : "Picked from the data: this phase moves most with the units. Choose it yourself if that is wrong." }));
+    }
+    async function doTrain() {
+      if (busy || !dataset || dataset.kind !== "export") return;
+      busy = true;
+      const btn = $("f-train"), bar = $("f-progress"), msg = $("f-trainmsg");
+      btn.disabled = true;
+      bar.hidden = false;
+      msg.hidden = false;
+      msg.className = "notice";
+      msg.textContent = "Training\u2026";
+      const t0 = Date.now();
+      try {
+        const res = await train(dataset.grid, {
+          onProgress: (p) => {
+            if (p.frac !== void 0) bar.firstChild.style.width = Math.round(Math.min(1, p.frac) * 100) + "%";
+            if (p.stage === "fit" && p.iter) msg.textContent = "Training\u2026 pass " + p.iter;
+          }
+        });
+        model = res.model;
+        lastTrain = res;
+        trained = { model, report: res.report, map: dataset.map, label: dataset.label, at: Date.now() };
+        store.set("acs-flat-model-v1", trained);
+        msg.textContent = "Trained in " + ((Date.now() - t0) / 1e3).toFixed(0) + " s. See \u201CThe model and how well it predicts\u201D below.";
+        $("f-p-model").open = true;
+        renderModelInfo();
+        schedule();
+      } catch (e) {
+        msg.className = "notice err";
+        msg.textContent = "Training failed: " + e.message;
+      } finally {
+        busy = false;
+        btn.disabled = false;
+        bar.hidden = true;
+        bar.firstChild.style.width = "0";
+      }
+    }
+    function renderModelInfo() {
+      const info = $("f-modelinfo");
+      const r = trained && trained.report;
+      if (r) {
+        const val = r.rmseVal, worst = Math.max(...val), best = Math.min(...val);
+        info.textContent = "Trained on " + r.days.train.length + " days from " + (trained.label || "your export") + ", " + dayLabel(r.range.start) + " to " + dayLabel(r.range.end) + ". On " + (r.days.val.length || 1) + " held-out day" + ((r.days.val.length || 1) > 1 ? "s" : "") + " it was off by " + best.toFixed(1) + "\u2013" + worst.toFixed(1) + " K.";
+      } else info.textContent = "Example apartment with made-up rooms. Load your export to train the model on your own data.";
+      const dinfo = $("f-dayinfo");
+      if (dataset) {
+        dinfo.textContent = (dataset.kind === "example" ? "Made-up example days, not your data. " : "From " + dataset.label + ". ") + (dataset.grid.price && dataset.grid.price.length ? dataset.scale === 100 ? "Prices converted from ct/kWh." : "" : "No price sensor in the data: made-up autumn prices are used.");
+      }
+      renderReport();
+    }
+    function renderReport() {
+      const box = $("f-report");
+      box.textContent = "";
+      const r = trained && trained.report;
+      box.append(h("p", { class: "hint", text: r ? "Every room has three layers here: its air, which the thermometer reads; its surfaces and furniture, which the air warms within hours; and the walls and floor slab, which take days. The model learned how much each holds and how it leaks to the outside, to the neighbours and to the hallway." : "This is the made-up example apartment. After training on your export, this shows what the model learned and how well it predicted days it had not seen." }));
+      const rows = ZONE_IDS.map((z, i) => {
+        const s = zoneSummary(model, z);
+        return h(
+          "tr",
+          {},
+          h("td", { text: LABEL[z] }),
+          h("td", { text: trained && trained.map ? trained.map.temp[z] || "\u2013" : "\u2013" }),
+          h("td", { text: s.C.toFixed(1) }),
+          h("td", { text: (s.Hloss * 1e3).toFixed(0) }),
+          h("td", { text: s.tauH.toFixed(0) }),
+          h("td", { text: r ? r.rmseVal[i].toFixed(2) : "\u2013" })
+        );
+      });
+      box.append(h("div", { class: "tablewrap" }, h(
+        "table",
+        {},
+        h("thead", {}, h("tr", {}, ["Zone", "Thermometer", "Stores, kWh/K", "Loses, W/K", "Time constant, h", "Held-out error, K"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, rows)
+      )));
+      const pl = model.plant;
+      box.append(h("p", { class: "hint", text: "Heat pump: COP " + (pl.eta * carnotHeat(21, 7)).toFixed(1) + " at 21 \xB0C inside and 7 \xB0C outside, at most " + pl.Qmax.toFixed(1) + " kW of heat from the outdoor unit. " + AC_ZONES.map((z) => LABEL[z] + " up to " + model.ac[z].Qmax.toFixed(1) + " kW, its sensor reads " + (model.ac[z].off >= 0 ? "+" : "") + model.ac[z].off.toFixed(1) + " K").join("; ") + "." }));
+      if (r && r.warnings.length) box.append(h("ul", { class: "warn" }, r.warnings.map((w) => h("li", { text: w }))));
+      if (r && r.energy.observed) box.append(h("p", { class: "hint", text: "On the held-out days the model used " + r.energy.sim.toFixed(1) + " kWh for the units; the phase showed " + r.energy.obs.toFixed(1) + " kWh above its usual other loads. The phase also carries whatever else runs while the units do, so expect the model to be lower." }));
+      if (lastTrain && dataset && dataset.kind === "export") {
+        const v = lastTrain.validation;
+        const dsel = h("select", { id: "f-chk-day" }, v.map((d, i) => h("option", { value: i, text: dayLabel(d.t0) })));
+        const zsel = h("select", { id: "f-chk-zone" }, ZONE_IDS.map((z) => h("option", { value: z, text: LABEL[z] })));
+        const svg = svgEl("svg", { class: "chart", id: "f-ch-check", role: "img", "aria-label": "Measured and predicted temperature on a held-out day" });
+        const leg = h("div", { class: "legend" });
+        box.append(h("div", { class: "row" }, h("label", { for: "f-chk-day", class: "hint", text: "Check" }), dsel, zsel), h("div", { class: "card check" }, leg, svg));
+        const draw = () => {
+          const d = v[+dsel.value], zi = ZONE_IDS.indexOf(zsel.value), g = dataset.grid, n = ZONE_IDS.length;
+          const steps = Math.round(24 / g.stepH), pts = [], meas = [];
+          for (let j = 0; j <= steps && d.k0 + j < g.K; j++) {
+            pts.push({ t: g.t[d.k0 + j], v: d.run.T[j * n + zi] });
+            meas.push({ t: g.t[d.k0 + j], v: g.T[zi][d.k0 + j] });
+          }
+          const range = { start: pts[0].t, end: pts[pts.length - 1].t };
+          const yt = niceTicks(...extent(pts.map((p) => p.v).concat(meas.map((p) => p.v)), 0.3), 4);
+          const gg = frame(svg, { height: 200, yt, fmtY: (x) => x.toFixed(yt.step < 1 ? 1 : 0) + "\xB0", range, night: null });
+          svgEl("path", { d: linePath(meas, gg), class: "ln thin c-room measured" }, gg.svg);
+          svgEl("path", { d: linePath(pts, gg), class: "ln c-room" }, gg.svg);
+          legend(leg, [["c-room", "Predicted from midnight"], ["c-room", "Measured", "thin fade"]]);
+        };
+        dsel.onchange = draw;
+        zsel.onchange = draw;
+        requestAnimationFrame(draw);
+      }
+      const ta = h("textarea", { id: "f-model-json", placeholder: "Paste a model copied from here earlier" });
+      const status = h("span", { class: "hint", role: "status" });
+      box.append(h(
+        "div",
+        { class: "row" },
+        h("button", { class: "btn", type: "button", text: "Copy model", onclick: () => {
+          ta.value = JSON.stringify(trained || { model });
+          copyText(ta.value, ta, status);
+        } }),
+        h("button", { class: "btn", type: "button", text: "Use pasted model", onclick: () => {
+          try {
+            const j = JSON.parse(ta.value), m = j.model || j;
+            if (!m.zones || !m.plant || m.version !== defaultModel().version) throw new Error("not a model from this version of the simulator");
+            model = m;
+            trained = j.model ? j : { model: m };
+            store.set("acs-flat-model-v1", trained);
+            lastTrain = null;
+            status.textContent = "Model loaded.";
+            renderModelInfo();
+            schedule();
+          } catch (e) {
+            status.textContent = "That is not a model: " + e.message + ".";
+          }
+        } }),
+        trained ? h("button", { class: "btn", type: "button", text: "Back to the example model", onclick: () => {
+          trained = null;
+          lastTrain = null;
+          model = defaultModel();
+          store.set("acs-flat-model-v1", null);
+          renderModelInfo();
+          schedule();
+        } }) : null,
+        status
+      ), ta);
+    }
+    function priceFor(k0) {
+      if (dataset.price && dataset.price.length) return dataset.price;
+      const d0 = dataset.grid.t[k0], out = [];
+      for (let q = -96; q < 192; q++) {
+        const hh = (q / 4 % 24 + 24) % 24, i = Math.floor(hh), f = hh - i;
+        out.push({ t: d0 + q * 15 * MIN, v: AUTUMN[i] + (AUTUMN[(i + 1) % 24] - AUTUMN[i]) * f });
+      }
+      return out;
+    }
+    function baseSpec() {
+      if (baseKind === "recorded") return Object.fromEntries(AC_ZONES.map((z) => [z, { kind: "recorded" }]));
+      return Object.fromEntries(AC_ZONES.map((z) => [z, { kind: "blueprint", P: baseKind === "pinned" && pinned ? Object.assign({}, BLUEPRINT_DEFAULTS, pinned[z]) : Object.assign({}, units[z], { use_near: false }) }]));
+    }
+    function run() {
+      const g = dataset.grid, k0 = +$("f-day").value || dataset.days[dataset.days.length - 1];
+      const price = priceFor(k0);
+      RES = simulateDay(model, g, k0, { units: Object.fromEntries(AC_ZONES.map((z) => [z, { kind: "blueprint", P: units[z] }])), heater, price });
+      BRES = simulateDay(model, g, k0, { units: baseSpec(), heater: baseKind === "recorded" ? { kind: "recorded" } : heater, price });
+      RANGE = { start: RES.rows[0].t, end: RES.rows[RES.rows.length - 1].t + MIN };
+    }
+    function schedule() {
+      if (pending || !active || !dataset) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        if (!active) return;
+        run();
+        render();
+      });
+    }
+    function render() {
+      renderTabs();
+      renderCompare();
+      renderTiles();
+      renderCharts();
+      renderYaml();
+    }
+    function renderTabs() {
+      for (const b of document.querySelectorAll("#f-units button")) b.setAttribute("aria-selected", b.dataset.unit === unit ? "true" : "false");
+    }
+    function renderCompare() {
+      const w = $("f-basewhat");
+      w.textContent = "";
+      w.append("Grey lines show ", h("b", { text: baseKind === "recorded" ? dataset.kind === "example" ? "what the example units did" : "what your units really did that day" : baseKind === "pinned" && pinned ? "the settings pinned " + (pinned._at || "") : "the same settings with the falling-price hold switched off" }), ", run through the same model.");
+      $("f-unpin").disabled = !pinned;
+    }
+    function renderTiles() {
+      const box = $("f-tiles");
+      box.textContent = "";
+      const T = (s) => document.createTextNode(s);
+      const acIdx = AC_ZONES.map((z) => ZONE_IDS.indexOf(z));
+      const coldest = (r) => {
+        let best = Infinity, who = "";
+        for (const i of acIdx) if (r.minT[i] < best) {
+          best = r.minT[i];
+          who = LABEL[ZONE_IDS[i]];
+        }
+        return [best, who];
+      };
+      const [cMin, cWho] = coldest(RES), [bMin] = coldest(BRES);
+      box.append(
+        tile("Units\u2019 electricity cost", "\u20AC" + RES.cost.toFixed(2), "", [[delta(RES.cost, BRES.cost, 2, " \u20AC", true)], [T("baseline \u20AC" + BRES.cost.toFixed(2))]]),
+        tile("Average price paid", RES.avgPrice === null ? "\u2013" : RES.avgPrice.toFixed(3), "\u20AC/kWh", [[delta(RES.avgPrice, BRES.avgPrice, 3, "", true)], [T("baseline " + fmt(BRES.avgPrice, 3))]]),
+        tile("Units\u2019 energy", RES.energy.toFixed(1), "kWh", [[delta(RES.energy, BRES.energy, 1, " kWh", true)], [T("baseline " + BRES.energy.toFixed(1) + " kWh")], [T("bath heater " + RES.heaterEnergy.toFixed(1) + " kWh on top")]]),
+        tile("Coldest room with a unit", cMin.toFixed(1), "\xB0C", [[T(cWho)], [T("baseline " + bMin.toFixed(1) + " \xB0C")]])
+      );
+    }
+    function renderCharts() {
+      const rows = RES.rows, brows = BRES.rows, P = units[unit], night = { start: P.night_start, end: P.night_end };
+      const g = dataset.grid, showMeasured = dataset.kind === "export";
+      const measured = (zi) => {
+        const out = [];
+        for (let k = rows[0].k; k <= rows[rows.length - 1].k + 1 && k < g.K; k++) out.push({ t: g.t[k], v: g.T[zi][k] });
+        return out;
+      };
+      GEO = [];
+      const zbox = $("f-zones");
+      if (!zbox.childElementCount) for (const z of ZONE_IDS) zbox.append(h(
+        "div",
+        { class: "card", id: "f-card-" + z, tabindex: 0, "aria-label": LABEL[z] + " over the day" },
+        h("div", { class: "card-head" }, h("h2", { text: LABEL[z] }), h("div", { class: "legend", id: "f-leg-" + z })),
+        svgEl("svg", { class: "chart", id: "f-ch-" + z, role: "img", "aria-label": LABEL[z] + " temperature" })
+      ));
+      ZONE_IDS.forEach((z, zi) => {
+        const a2 = AC_ZONES.indexOf(z), meas = showMeasured ? measured(zi) : [];
+        const vals = rows.map((r) => r.Ta[zi]).concat(meas.map((p) => p.v));
+        if (a2 >= 0) {
+          for (const r of rows.concat(brows)) if (r.unit[a2].mode !== "off") vals.push(r.unit[a2].target);
+        }
+        const yt2 = niceTicks(...extent(vals, 0.3), 4);
+        const band = a2 >= 0 || z === "bath" ? 30 : 0;
+        const gz = frame($("f-ch-" + z), { height: band ? 210 : 170, yt: yt2, fmtY: (v) => v.toFixed(yt2.step < 1 ? 1 : 0) + "\xB0", band, range: RANGE, night });
+        if (a2 >= 0) svgEl("path", { d: stepPath(brows, gz, (r) => r.unit[a2].mode === "off" ? null : r.unit[a2].target), class: "ln thin c-base" }, gz.svg);
+        if (meas.length) svgEl("path", { d: linePath(meas, gz), class: "ln thin c-room measured" }, gz.svg);
+        svgEl("path", { d: linePath(every(rows, 5, (r) => r.Ta[zi]), gz), class: "ln c-room" }, gz.svg);
+        if (a2 >= 0) {
+          svgEl("path", { d: stepPath(rows, gz, (r) => r.unit[a2].target), class: "ln thin c-target measured" }, gz.svg);
+          svgEl("path", { d: stepPath(rows, gz, (r) => r.unit[a2].mode === "off" ? null : r.unit[a2].target), class: "ln c-target" }, gz.svg);
+          strip(gz, rows, gz.pb + 14, "c-target", (r) => r.unit[a2].mode !== "off");
+          strip(gz, brows, gz.pb + 22, "c-base", (r) => r.unit[a2].mode !== "off");
+          stripLabel(gz, gz.pb + 19, "runs");
+          stripLabel(gz, gz.pb + 27, "base");
+        } else if (z === "bath") {
+          strip(gz, rows, gz.pb + 14, "c-target", (r) => r.heater > 0.05);
+          strip(gz, brows, gz.pb + 22, "c-base", (r) => r.heater > 0.05);
+          stripLabel(gz, gz.pb + 19, "heater");
+          stripLabel(gz, gz.pb + 27, "base");
+        }
+        const items2 = [["c-room", "Room (model)"]];
+        if (meas.length) items2.push(["c-room", "Measured", "thin fade"]);
+        if (a2 >= 0) items2.push(["c-target", "Target (faint while off)"], ["c-base", "Target, baseline", "thin"]);
+        legend($("f-leg-" + z), items2);
+        GEO.push({ card: $("f-card-" + z), g: gz, dots: (i) => [[rows[i].Ta[zi], "c-room"]].concat(a2 >= 0 && rows[i].unit[a2].mode !== "off" ? [[rows[i].unit[a2].target, "c-target"]] : []) });
+      });
+      let yt = niceTicks(...extent(rows.map((r) => r.tout), 0.5), 3);
+      const gO = frame($("f-ch-outdoor"), { height: 130, yt, fmtY: (v) => v.toFixed(yt.step < 1 ? 1 : 0) + "\xB0", range: RANGE, night });
+      svgEl("path", { d: linePath(every(rows, 5, (r) => r.tout), gO), class: "ln c-outdoor" }, gO.svg);
+      GEO.push({ card: $("f-card-outdoor"), g: gO, dots: (i) => [[rows[i].tout, "c-outdoor"]] });
+      const a = AC_ZONES.indexOf(unit), x = (r) => r.unit[a].x || {};
+      const pv = rows.map((r) => r.price).concat(P.use_forward ? rows.map((r) => x(r).fwdMean) : [], P.use_near ? rows.map((r) => x(r).nearMean) : [], [P.price_cheap, P.price_expensive]);
+      const ytp = niceTicks(...extent(pv, 0), 4);
+      const gP = frame($("f-ch-price"), { height: 190, yt: ytp, fmtY: (v) => v.toFixed(ytp.step < 0.01 ? 3 : 2), range: RANGE, night });
+      if (P.use_near) holdBands(gP, rows, (r) => r.unit[a].d);
+      refLines(gP, ytp, P);
+      if (P.use_forward) svgEl("path", { d: stepPath(rows, gP, (r) => x(r).fwdMean), class: "ln thin c-forward" }, gP.svg);
+      if (P.use_near) svgEl("path", { d: stepPath(rows, gP, (r) => x(r).nearMean), class: "ln thin c-near" }, gP.svg);
+      svgEl("path", { d: stepPath(rows, gP, (r) => r.price), class: "ln c-price" }, gP.svg);
+      const items = [["c-price", "Price now"]];
+      if (P.use_forward) items.push(["c-forward", "\u2300 next " + P.forward_hours + " h", "thin"]);
+      if (P.use_near) {
+        items.push(["c-near", "\u2300 next " + P.near_hours + " h", "thin"]);
+        items.push(["c-price", LABEL[unit] + " holding", "box fade"]);
+      }
+      legend($("f-leg-price"), items);
+      GEO.push({ card: $("f-card-price"), g: gP, dots: (i) => [[rows[i].price, "c-price"]] });
+      const cur = quarterMeans(rows, (r) => r.pel), base = quarterMeans(brows, (r) => r.pel);
+      const obs = [];
+      if (showMeasured && dataset.pw.ok.some((v) => v)) for (let k = rows[0].k; k <= rows[rows.length - 1].k && k < g.K; k++) obs.push({ t: g.t[k], v: dataset.pw.ok[k] ? Math.max(0, dataset.pw.obs[k]) : null });
+      const ytw = niceTicks(0, Math.max(0.5, ...cur.concat(base).map((p) => p.v), ...obs.map((p) => p.v || 0)), 3);
+      const gW = frame($("f-ch-power"), { height: 160, yt: ytw, fmtY: (v) => v.toFixed(ytw.step < 1 ? 1 : 0) + " kW", range: RANGE, night });
+      const dc = quarterPath(cur, gW);
+      if (cur.length) svgEl("path", { d: dc + "V" + gW.Y(0).toFixed(1) + "H" + gW.X(cur[0].t).toFixed(1) + "Z", class: "area c-target" }, gW.svg);
+      if (obs.length) svgEl("path", { d: linePath(obs, gW), class: "ln thin c-forward measured" }, gW.svg);
+      svgEl("path", { d: quarterPath(base, gW), class: "ln thin c-base" }, gW.svg);
+      svgEl("path", { d: dc, class: "ln c-target" }, gW.svg);
+      legend($("f-leg-power"), [["c-target", "Current settings"], ["c-base", "Baseline", "thin"]].concat(obs.length ? [["c-forward", "Phase reading, other loads taken out", "thin fade"]] : []));
+      GEO.push({ card: $("f-card-power"), g: gW });
+      hv.bind();
+      if (hv.idx !== null) hv.show(hv.idx);
+    }
+    function fillTip(i, tip) {
+      const r = RES.rows[i], b = BRES.rows[i];
+      tip.append(h("div", { class: "t", text: hhmm(r.t) }));
+      ZONE_IDS.forEach((z, zi) => {
+        const a2 = AC_ZONES.indexOf(z), u = a2 >= 0 ? r.unit[a2] : null;
+        tipRow(tip, "c-room", LABEL[z], fmt(r.Ta[zi], 1) + " \xB0C" + (u ? u.mode === "off" ? " \xB7 off" : " \u2192 " + fmt(u.target, 1) + " " + u.mode : z === "bath" && r.heater > 0.05 ? " \xB7 heater on" : ""));
+      });
+      tipRow(tip, "c-outdoor", "Outdoor", fmt(r.tout, 1) + " \xB0C");
+      tipRow(tip, "c-price", "Price now", fmt(r.price, 3));
+      tipRow(tip, "c-target", "Units, power", r.pel.toFixed(2) + " kW");
+      tipRow(tip, "c-base", "Baseline", b.pel.toFixed(2) + " kW");
+      const a = AC_ZONES.indexOf(unit), d = r.unit[a].d;
+      const why = d ? reasons(Object.assign({}, d, { mode: r.unit[a].mode }), units[unit]) : "";
+      if (why) tip.append(h("div", { class: "why", text: LABEL[unit] + ": " + why }));
+    }
+    function renderYaml() {
+      $("f-yaml").textContent = AC_ZONES.map((z) => yamlFor(units[z], dataset.scale, LABEL[z] + (dataset.map.climate[z] ? " (" + dataset.map.climate[z] + ")" : ""))).join("\n\n");
+    }
+    const tabs = $("f-units");
+    for (const z of AC_ZONES) tabs.append(h("button", { type: "button", role: "tab", "data-unit": z, text: LABEL[z], onclick: () => {
+      unit = z;
+      writeForm(form2, units[unit]);
+      persist();
+      schedule();
+    } }));
+    $("f-copyall").addEventListener("click", () => {
+      for (const z of AC_ZONES) if (z !== unit) {
+        const keep = {};
+        for (const m of ["heat", "cool"]) for (const [k] of AXIS) keep[m + "_" + k] = units[z][m + "_" + k];
+        units[z] = Object.assign(clone(units[unit]), keep);
+      }
+      persist();
+      schedule();
+    });
+    $("f-file").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const msg = $("f-trainmsg");
+      msg.hidden = false;
+      msg.className = "notice";
+      msg.textContent = "Reading " + f.name + "\u2026";
+      readFile(f, (t) => setTimeout(() => loadExport(t, f.name), 0), (m) => {
+        msg.className = "notice err";
+        msg.textContent = m;
+      });
+      e.target.value = "";
+    });
+    $("f-train").addEventListener("click", doTrain);
+    $("f-day").addEventListener("change", schedule);
+    const bsel = $("f-base");
+    bsel.value = baseKind;
+    bsel.addEventListener("change", () => {
+      baseKind = bsel.value;
+      if (baseKind === "pinned" && !pinned) pin();
+      persist();
+      schedule();
+    });
+    function pin() {
+      pinned = Object.assign(clone(units), { _at: "at " + (/* @__PURE__ */ new Date()).toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit" }) });
+    }
+    $("f-pin").addEventListener("click", () => {
+      pin();
+      baseKind = "pinned";
+      bsel.value = "pinned";
+      persist();
+      schedule();
+    });
+    $("f-unpin").addEventListener("click", () => {
+      pinned = null;
+      if (baseKind === "pinned") {
+        baseKind = "recorded";
+        bsel.value = baseKind;
+      }
+      persist();
+      schedule();
+    });
+    const hk = $("f-heater"), hs = $("f-heater-set"), hw = $("f-heater-win");
+    hk.value = heater.kind;
+    hs.value = heater.set;
+    hw.value = heater.windows;
+    const syncHeater = () => {
+      $("f-heater-thermo").hidden = heater.kind !== "thermostat";
+    };
+    hk.addEventListener("change", () => {
+      heater.kind = hk.value;
+      syncHeater();
+      persist();
+      schedule();
+    });
+    hs.addEventListener("input", () => {
+      if (isFinite(+hs.value)) {
+        heater.set = +hs.value;
+        persist();
+        schedule();
+      }
+    });
+    hw.addEventListener("change", () => {
+      heater.windows = hw.value;
+      persist();
+      schedule();
+    });
+    syncHeater();
+    $("f-copy").addEventListener("click", () => copyText($("f-yaml").textContent, $("f-yaml"), $("f-copied")));
+    return {
+      activate() {
+        active = true;
+        showMode(form2, "flat");
+        writeForm(form2, units[unit]);
+        if (!dataset) {
+          useDataset(exampleDataset());
+        } else schedule();
+        renderModelInfo();
+      },
+      deactivate() {
+        active = false;
+        hv.hide();
+      },
+      input() {
+        readForm(form2, units[unit]);
+        persist();
+        schedule();
+      },
+      reset() {
+        units[unit] = Object.assign({}, BLUEPRINT_DEFAULTS, SYNTHETIC_INSTANCES[unit]);
+        writeForm(form2, units[unit]);
+        persist();
+        schedule();
+      },
+      resize() {
+        if (active && RES) renderCharts();
+      }
+    };
+  }
+
+  // ui/main.js
+  var form = $("params");
+  buildForm(form);
+  var views = { room: createRoomView({ form }), flat: createFlatView({ form }) };
+  var mode = null;
+  function setMode(m) {
+    if (mode) views[mode].deactivate();
+    mode = m;
+    store.set("acs-sim-mode", m);
+    for (const k of Object.keys(views)) {
+      $("rail-" + k).hidden = k !== m;
+      $("stage-" + k).hidden = k !== m;
+      $("mode-" + k).setAttribute("aria-selected", k === m ? "true" : "false");
+    }
+    $("reset").textContent = m === "flat" ? "Reset this unit to blueprint defaults" : "Reset to blueprint defaults";
+    views[m].activate();
+  }
+  form.addEventListener("input", () => views[mode].input());
+  form.addEventListener("submit", (e) => e.preventDefault());
+  $("reset").addEventListener("click", () => views[mode].reset());
+  for (const k of Object.keys(views)) $("mode-" + k).addEventListener("click", () => {
+    if (k !== mode) setMode(k);
+  });
+  var rw = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(rw);
+    rw = setTimeout(() => views[mode].resize(), 80);
+  });
+  setMode(store.get("acs-sim-mode") === "room" ? "room" : "flat");
+})();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,404 @@
+<title>Climate Setpoint Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Replay a day of electricity prices and outdoor temperatures through the Adaptive Climate Setpoint blueprint, for one room or a whole apartment trained on Home Assistant data.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a tuning bench - parameter rail on the left, three stacked time-of-day charts on one shared clock on the right. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #fcfcfd;
+  --ink: #10161d;
+  --ink-2: #4b5560;
+  --muted: #7b8591;
+  --line: #e1e5ea;
+  --axis: #c3c9d0;
+  --wash: #e9eef4;
+  --accent: #1f66bd;
+  --accent-ink: #ffffff;
+  --good: #006300;
+  --bad: #c23434;
+  --s-target: #2a78d6;
+  --s-room: #eb6834;
+  --s-outdoor: #1baf7a;
+  --s-price: #6250d6;
+  --s-near: #eda100;
+  --s-forward: #52514e;
+  --s-base: #898781;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1215; --surface: #181b1f; --ink: #eef1f4; --ink-2: #b8c0c9; --muted: #8a929b;
+    --line: #2a2e34; --axis: #3b4047; --wash: #20252b; --accent: #4a8fe0; --accent-ink: #0b0f14;
+    --good: #0ca30c; --bad: #e66767;
+    --s-target: #3987e5; --s-room: #d95926; --s-outdoor: #199e70; --s-price: #9085e9;
+    --s-near: #c98500; --s-forward: #c3c2b7; --s-base: #898781;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1215; --surface: #181b1f; --ink: #eef1f4; --ink-2: #b8c0c9; --muted: #8a929b;
+  --line: #2a2e34; --axis: #3b4047; --wash: #20252b; --accent: #4a8fe0; --accent-ink: #0b0f14;
+  --good: #0ca30c; --bad: #e66767;
+  --s-target: #3987e5; --s-room: #d95926; --s-outdoor: #199e70; --s-price: #9085e9;
+  --s-near: #c98500; --s-forward: #c3c2b7; --s-base: #898781;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.45 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 15px; font-weight: 600; }
+.lede { color: var(--ink-2); max-width: 68ch; margin: 4px 0 0; }
+.masthead { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; max-width: 1400px; margin: 0 auto 18px; }
+.masthead .tag { font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+.bench { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 18px; max-width: 1400px; margin: 0 auto; align-items: start; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); } .rail { order: 2; } .stage { order: 1; } }
+
+/* parameter rail */
+.rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.group > summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 600 14px/1.2 var(--f-display); }
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); margin-top: -3px; transition: transform .15s; }
+.group[open] > summary::after { transform: rotate(-135deg); margin-top: 3px; }
+.group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r); }
+.group .body { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.hint { color: var(--muted); font-size: 12px; margin: 0; }
+.hint code, .note code { font-family: var(--f-mono); font-size: 11.5px; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
+.field > label, .field > .lbl { font-size: 13px; color: var(--ink); }
+.field.stack { grid-template-columns: minmax(0, 1fr); }
+.field.stack select { width: 100%; font-family: var(--f-body); }
+.field .sub { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); margin-top: -2px; }
+.field.off > label, .field.off .num { opacity: .45; }
+.num { display: inline-flex; align-items: center; gap: 4px; }
+.num input { width: 76px; }
+.unit { font: 12px var(--f-mono); color: var(--muted); min-width: 34px; }
+input[type="number"], input[type="time"], select, textarea {
+  font: 13px var(--f-mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--axis); border-radius: 4px; padding: 4px 6px;
+}
+textarea { width: 100%; min-height: 90px; resize: vertical; font-size: 12px; }
+select { max-width: 100%; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.slider { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 56px; gap: 8px; align-items: center; }
+.slider output { font: 12px var(--f-mono); text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.axis-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 10px; align-items: center; }
+.axis-grid .h { font: 500 11px var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.axis-grid input { width: 100%; min-width: 0; }
+.sep { height: 1px; background: var(--line); margin: 2px 0; }
+.toggle { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.btn { font: 500 13px var(--f-body); border-radius: 4px; padding: 6px 10px; cursor: pointer; border: 1px solid var(--axis); background: var(--surface); color: var(--ink); }
+.btn:hover { background: var(--wash); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.notice { font-size: 12px; color: var(--ink-2); background: var(--wash); border-radius: 4px; padding: 6px 8px; margin: 0; }
+.notice.err { color: var(--bad); }
+
+/* stage */
+.stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; position: relative; }
+.compare { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+.compare .what { font-size: 13px; color: var(--ink-2); }
+.compare .what b { color: var(--ink); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--ink-2); }
+.tile .v { font: 600 24px/1.15 var(--f-body); letter-spacing: -0.01em; }
+.tile .v small { font: 500 13px var(--f-body); color: var(--ink-2); margin-left: 3px; }
+.tile .d { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .d .up, .tile .d .down { font-weight: 600; }
+.d .better { color: var(--good); } .d .worse { color: var(--bad); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px 6px; position: relative; min-width: 0; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; margin-bottom: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid currentColor; }
+.legend i.thin { border-top-width: 1.5px; }
+.legend i.box { height: 10px; width: 12px; border: 0; border-radius: 2px; background: currentColor; }
+.legend i.box.fade { opacity: .3; }
+.legend i.fade { opacity: .5; }
+svg.chart { display: block; width: 100%; overflow: visible; touch-action: pan-y; }
+svg.chart text { font: 11px var(--f-mono); fill: var(--muted); }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .base { stroke: var(--axis); stroke-width: 1; }
+svg.chart .ref { stroke: var(--axis); stroke-width: 1; }
+svg.chart .night { fill: var(--wash); }
+svg.chart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg.chart .ln.thin { stroke-width: 1.5; }
+svg.chart .cross { stroke: var(--ink-2); stroke-width: 1; }
+svg.chart .dot { stroke: var(--surface); stroke-width: 2; }
+svg.chart .strip-lbl { font: 10px var(--f-mono); fill: var(--muted); }
+.c-target { stroke: var(--s-target); color: var(--s-target); fill: var(--s-target); }
+.c-room { stroke: var(--s-room); color: var(--s-room); fill: var(--s-room); }
+.c-outdoor { stroke: var(--s-outdoor); color: var(--s-outdoor); fill: var(--s-outdoor); }
+.c-price { stroke: var(--s-price); color: var(--s-price); fill: var(--s-price); }
+.c-near { stroke: var(--s-near); color: var(--s-near); fill: var(--s-near); }
+.c-forward { stroke: var(--s-forward); color: var(--s-forward); fill: var(--s-forward); }
+.c-base { stroke: var(--s-base); color: var(--s-base); fill: var(--s-base); }
+svg .ln.c-target, svg .ln.c-room, svg .ln.c-outdoor, svg .ln.c-price, svg .ln.c-near, svg .ln.c-forward, svg .ln.c-base { fill: none; }
+svg .measured { opacity: .5; }
+svg .area { stroke: none; opacity: .12; }
+svg .hold { fill: var(--s-price); }
+
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--axis); border-radius: var(--r); padding: 8px 10px; font-size: 12px; min-width: 210px; max-width: 280px; box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+.tip .t { font: 600 13px var(--f-mono); margin-bottom: 4px; }
+.tip .r { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; align-items: center; line-height: 1.5; }
+.tip .r i { width: 12px; height: 0; border-top: 2px solid currentColor; }
+.tip .r .l { color: var(--muted); }
+.tip .r b { font: 500 12px var(--f-mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.tip .why { color: var(--ink-2); margin-top: 4px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.panel > summary { cursor: pointer; padding: 10px 12px; font: 600 14px var(--f-display); }
+.panel .body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+pre.yaml { margin: 0; font: 12px/1.5 var(--f-mono); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 10px; overflow-x: auto; user-select: all; }
+.tablewrap { overflow-x: auto; max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; font: 12px var(--f-mono); font-variant-numeric: tabular-nums; width: 100%; }
+th, td { padding: 4px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th { position: sticky; top: 0; background: var(--surface); color: var(--ink-2); font-weight: 500; }
+td:first-child, th:first-child { text-align: left; }
+.note { color: var(--muted); font-size: 12px; max-width: 80ch; margin: 0; }
+/* modes and unit tabs */
+.modes, .unit-tabs { display: inline-flex; border: 1px solid var(--axis); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.modes button, .unit-tabs button { font: 500 13px var(--f-body); color: var(--ink-2); background: transparent; border: 0; padding: 7px 12px; cursor: pointer; }
+.modes button + button, .unit-tabs button + button { border-left: 1px solid var(--axis); }
+.modes button[aria-selected="true"], .unit-tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.modes button:focus-visible, .unit-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.unit-tabs { display: flex; width: 100%; }
+.unit-tabs button { flex: 1 1 0; min-width: 0; padding: 7px 6px; }
+.unit-pick { display: flex; flex-direction: column; gap: 6px; }
+.unit-pick .lbl { font: 600 14px var(--f-display); }
+.progress { height: 6px; background: var(--wash); border-radius: 3px; overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+ul.warn { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.zones { display: flex; flex-direction: column; gap: 12px; }
+.card.check { padding-top: 8px; }
+#f-model-json { min-height: 60px; }
+details.roles > summary { cursor: pointer; font-size: 13px; color: var(--ink-2); padding: 2px 0; }
+details.roles .body-inner { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+#f-report table td:nth-child(2) { font-size: 11px; color: var(--ink-2); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<!--/head-->
+<header class="masthead">
+  <div>
+    <div class="tag">Adaptive Climate Setpoint · day simulator</div>
+    <h1>Climate Setpoint Simulator</h1>
+    <p class="lede">Replay a day of electricity prices and outdoor temperatures through the blueprint's logic, then move the parameters and watch where the target temperature, the rooms and the power draw go.</p>
+  </div>
+  <div class="modes" role="tablist" aria-label="What to simulate">
+    <button type="button" role="tab" id="mode-room">One room</button>
+    <button type="button" role="tab" id="mode-flat">Whole apartment</button>
+  </div>
+</header>
+
+<main class="bench">
+  <aside class="rail" id="rail">
+    <div id="rail-room" style="display:flex;flex-direction:column;gap:10px">
+    <details class="group" open id="g-data">
+      <summary>Day</summary>
+      <div class="body">
+        <div class="field stack">
+          <label for="source">Data</label>
+          <select id="source"></select>
+        </div>
+        <div class="field" id="dayfield">
+          <label for="day">Day</label>
+          <select id="day"></select>
+        </div>
+        <p class="notice" id="datainfo"></p>
+        <div class="row">
+          <label class="btn" for="file">Load Home Assistant history…</label>
+          <input type="file" id="file" accept=".csv,.json,.txt,text/csv,application/json" hidden>
+        </div>
+        <p class="hint">In Home Assistant open <b>History</b>, add the price sensor, the outdoor sensor and optionally a room sensor, pick the day plus the following morning, then <b>⋮ → Download data</b>. CSV and the REST <code>/api/history</code> JSON both work.</p>
+        <details>
+          <summary class="hint" style="cursor:pointer">Paste data instead</summary>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            <textarea id="paste" placeholder="entity_id,state,last_changed&#10;sensor.price,0.284,2026-10-21T00:00:00.000Z&#10;…"></textarea>
+            <div class="row"><button class="btn" id="usepaste" type="button">Use pasted data</button></div>
+          </div>
+        </details>
+        <div id="mapping" hidden style="display:flex;flex-direction:column;gap:8px">
+          <div class="sep"></div>
+          <div class="field stack"><label for="map-price">Price</label><select id="map-price"></select></div>
+          <div class="field stack"><label for="map-outdoor">Outdoor temperature</label><select id="map-outdoor"></select></div>
+          <div class="field stack"><label for="map-indoor">Room temperature (for comparison)</label><select id="map-indoor"></select></div>
+        </div>
+      </div>
+    </details>
+    </div>
+    <div id="rail-flat" hidden style="display:flex;flex-direction:column;gap:10px">
+      <details class="group" open id="g-model">
+        <summary>Apartment model</summary>
+        <div class="body">
+          <p class="notice" id="f-modelinfo"></p>
+          <div class="row">
+            <label class="btn" for="f-file">Load apartment export…</label>
+            <input type="file" id="f-file" accept=".json,application/json" hidden>
+          </div>
+          <p class="hint">Made by <code>tools/ha_export_snippet.js</code>: open Home Assistant in a desktop browser, press F12, paste the snippet into the console and press Enter. It saves <code>apartment-export.json</code>.</p>
+          <div id="f-mapping" hidden style="display:flex;flex-direction:column;gap:8px"></div>
+          <div class="row"><button class="btn primary" type="button" id="f-train" hidden>Train the model on this data</button></div>
+          <div class="progress" id="f-progress" hidden><div></div></div>
+          <p class="notice" id="f-trainmsg" hidden role="status"></p>
+        </div>
+      </details>
+      <details class="group" open id="g-fday">
+        <summary>Day</summary>
+        <div class="body">
+          <div class="field stack"><label for="f-day">Day</label><select id="f-day"></select></div>
+          <div class="field stack"><label for="f-base">Grey lines show</label>
+            <select id="f-base">
+              <option value="recorded">What the units really did</option>
+              <option value="holdoff">Same settings, falling-price hold off</option>
+              <option value="pinned">Pinned settings</option>
+            </select>
+          </div>
+          <p class="notice" id="f-dayinfo"></p>
+        </div>
+      </details>
+      <details class="group" id="g-fheater">
+        <summary>Bath heater</summary>
+        <div class="body">
+          <div class="field stack"><label for="f-heater">The heater</label>
+            <select id="f-heater">
+              <option value="recorded">Runs as it did that day</option>
+              <option value="off">Stays off</option>
+              <option value="thermostat">Follows a thermostat</option>
+            </select>
+          </div>
+          <div id="f-heater-thermo" style="display:flex;flex-direction:column;gap:8px">
+            <div class="field"><label for="f-heater-set">Setpoint</label><span class="num"><input type="number" id="f-heater-set" step="0.5" min="10" max="30"><span class="unit">°C</span></span></div>
+            <div class="field stack"><label for="f-heater-win">Between</label><input type="text" id="f-heater-win" style="font:13px var(--f-mono);padding:4px 6px;border:1px solid var(--axis);border-radius:4px;background:var(--bg);color:var(--ink)"></div>
+            <p class="hint">Times as 06:00-07:30, 19:00-21:30.</p>
+          </div>
+        </div>
+      </details>
+      <div class="unit-pick">
+        <span class="lbl" id="f-units-lbl">Settings for</span>
+        <div class="unit-tabs" role="tablist" aria-labelledby="f-units-lbl" id="f-units"></div>
+        <div class="row"><button class="btn" type="button" id="f-copyall">Copy to the other units, keeping their temperatures</button></div>
+      </div>
+    </div>
+    <form id="params" autocomplete="off" style="display:flex;flex-direction:column;gap:10px"></form>
+    <div class="row"><button class="btn" type="button" id="reset">Reset to blueprint defaults</button></div>
+  </aside>
+
+  <section class="stage" id="stage">
+    <div id="stage-room" style="display:flex;flex-direction:column;gap:12px">
+    <div class="compare">
+      <div class="what" id="basewhat"></div>
+      <div class="row">
+        <button class="btn" type="button" id="pin">Pin current settings as baseline</button>
+        <button class="btn" type="button" id="unpin">Baseline: hold off</button>
+      </div>
+    </div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="card" id="card-temp" tabindex="0" aria-label="Target and room temperature over the day">
+      <div class="card-head">
+        <h2>Target and room temperature</h2>
+        <div class="legend" id="leg-temp"></div>
+      </div>
+      <svg class="chart" id="ch-temp" role="img" aria-label="Target and room temperature"></svg>
+    </div>
+    <div class="card" id="card-outdoor" tabindex="0" aria-label="Outdoor temperature over the day">
+      <div class="card-head">
+        <h2>Outdoor temperature</h2>
+      </div>
+      <svg class="chart" id="ch-outdoor" role="img" aria-label="Outdoor temperature"></svg>
+    </div>
+    <div class="card" id="card-price" tabindex="0" aria-label="Electricity price over the day">
+      <div class="card-head">
+        <h2>Electricity price</h2>
+        <div class="legend" id="leg-price"></div>
+      </div>
+      <svg class="chart" id="ch-price" role="img" aria-label="Price, forward and near-term averages"></svg>
+    </div>
+    <div class="card" id="card-power" tabindex="0" aria-label="Estimated power draw over the day">
+      <div class="card-head">
+        <h2>Estimated power draw</h2>
+        <div class="legend" id="leg-power"></div>
+      </div>
+      <svg class="chart" id="ch-power" role="img" aria-label="Electric power per 15 minutes"></svg>
+    </div>
+
+    <details class="panel" id="p-yaml">
+      <summary>Blueprint inputs</summary>
+      <div class="body">
+        <p class="hint">The current settings as blueprint inputs. Paste them under <code>use_blueprint: input:</code> in the automation's YAML, or copy the values into the editor by hand.</p>
+        <pre class="yaml" id="yaml"></pre>
+        <div class="row"><button class="btn" type="button" id="copy">Copy</button><span class="hint" id="copied" role="status"></span></div>
+      </div>
+    </details>
+    <details class="panel" id="p-table">
+      <summary>Table, every 15 minutes</summary>
+      <div class="body"><div class="tablewrap"><table id="table"></table></div></div>
+    </details>
+    <p class="note" id="approx">How close this is: the price windows are computed from the price curve the way tibber_prices builds its <code>⌀ Price Next Nh</code> sensors (from the next interval on). The day's forecast high and low are taken from the measured outdoor curve, and so is the hourly forecast behind the demand factor. Windows, presence, weekdays and manual overrides are not simulated. The room is a single-node model; it is good for comparing two parameter sets on the same day, not for predicting your bill. Calibrate it by loading a measured room temperature and adjusting <b>Room model</b> until the curves match.</p>
+    </div>
+    <div id="stage-flat" hidden style="display:flex;flex-direction:column;gap:12px">
+      <div class="compare">
+        <div class="what" id="f-basewhat"></div>
+        <div class="row">
+          <button class="btn" type="button" id="f-pin">Pin current settings as baseline</button>
+          <button class="btn" type="button" id="f-unpin">Forget pinned settings</button>
+        </div>
+      </div>
+      <div class="tiles" id="f-tiles"></div>
+      <div class="zones" id="f-zones"></div>
+      <div class="card" id="f-card-outdoor" tabindex="0" aria-label="Outdoor temperature over the day">
+        <div class="card-head"><h2>Outdoor temperature</h2></div>
+        <svg class="chart" id="f-ch-outdoor" role="img" aria-label="Outdoor temperature"></svg>
+      </div>
+      <div class="card" id="f-card-price" tabindex="0" aria-label="Electricity price over the day">
+        <div class="card-head"><h2>Electricity price</h2><div class="legend" id="f-leg-price"></div></div>
+        <svg class="chart" id="f-ch-price" role="img" aria-label="Price, forward and near-term averages"></svg>
+      </div>
+      <div class="card" id="f-card-power" tabindex="0" aria-label="Electricity the units use over the day">
+        <div class="card-head"><h2>Electricity for the three units</h2><div class="legend" id="f-leg-power"></div></div>
+        <svg class="chart" id="f-ch-power" role="img" aria-label="Electric power per 15 minutes"></svg>
+      </div>
+      <details class="panel" id="f-p-model">
+        <summary>The model and how well it predicts</summary>
+        <div class="body" id="f-report"></div>
+      </details>
+      <details class="panel" id="f-p-yaml">
+        <summary>Blueprint inputs for all three units</summary>
+        <div class="body">
+          <p class="hint">One block per automation. Paste each under <code>use_blueprint: input:</code> of that unit's automation, or copy the values into the editor by hand.</p>
+          <pre class="yaml" id="f-yaml"></pre>
+          <div class="row"><button class="btn" type="button" id="f-copy">Copy</button><span class="hint" id="f-copied" role="status"></span></div>
+        </div>
+      </details>
+      <p class="note">How close this is: the model was fitted to what your thermometers did when the units, the heater, the windows, the sun and the weather did what they did, and it was checked on days it had not seen. It knows nothing about people, cooking or doors you opened that have no sensor, so a single day can be off by a few tenths of a degree. Use it to compare settings on the same day; the absolute kWh lean on the heat pump's efficiency, which the phase reading can only roughly pin down.</p>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+  </section>
+</main>
+
+<script>
+/*APP*/
+</script>

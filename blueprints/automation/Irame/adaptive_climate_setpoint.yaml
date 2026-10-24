@@ -6,9 +6,10 @@ blueprint:
     electricity price slide the target along a Charge / Comfort / Coast axis,
     charging the building with heat or cold while power is cheap and coasting
     while it is dear. Price is judged both against fixed thresholds and,
-    optionally, against the average price of the coming hours, while how
-    deeply to charge is scaled by how much heating or cooling those hours are
-    forecast to need. Shuts off at
+    optionally, against the average price of the coming hours, and a price
+    that is still falling can hold the target back until it bottoms out, while
+    how deeply to charge is scaled by how much heating or cooling those hours
+    are forecast to need. Shuts off at
     night, on selected weekdays, during the dead band, or when the live outdoor
     temperature makes running pointless, and pauses itself for a configurable
     cooldown after any manual change at the device.
@@ -215,6 +216,57 @@ blueprint:
               min: 0.02
               max: 1
               step: 0.01
+              mode: slider
+
+        price_near_sensor:
+          name: Near-Term Average Price Sensor
+          description: >
+            Optional. A sensor whose state is the average price over just the
+            next hour or two - with the tibber_prices HACS integration that is
+            "Price Next 1h" or "Price Next 2h". While it sits below the current
+            price, the price is still on its way down, and the target is held
+            back until it has bottomed out - so the device does its hardest
+            work at the low instead of on the way down to it. Must report the
+            same unit as the price sensor. Leave empty to follow the price
+            signal straight away.
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              multiple: true
+
+        price_falling_margin:
+          name: Falling Price Margin
+          description: >
+            How far the current price must sit above the near-term average
+            before the target is held completely, as a fraction of that
+            average. 0.10 means: now 10 % dearer than the next hour or two
+            holds fully, 5 % dearer holds halfway. Smaller values wait more
+            strictly for the very bottom; larger values only wait out steep
+            drops. Only used when a Near-Term Average Price Sensor is set.
+          default: 0.10
+          selector:
+            number:
+              min: 0.02
+              max: 0.5
+              step: 0.01
+              mode: slider
+
+        price_falling_hold:
+          name: Hold While Falling
+          description: >
+            Where on the Charge / Comfort / Coast axis the target waits while
+            the price is still falling. 1 holds it at Coast, so reheating (or
+            re-cooling) waits for the low as well and all of it is bought
+            there. 0 holds it at Comfort, so only the extra charge waits.
+            Values in between hold partway. A target that already sits further
+            toward Coast is left alone.
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 1
+              step: 0.1
               mode: slider
 
         price_cheap:
@@ -879,8 +931,39 @@ action:
                 {% endif %}
               # Both halves are already clamped to -1..1, so this only guards
               # the contract for anything added to price_signal_raw later.
-              price_signal: >
+              price_signal_combined: >
                 {{ [[price_signal_raw | float, -1] | max, 1] | min }}
+
+              # The device works hardest right after the target rises, so a
+              # target that follows a falling price up buys most of its energy
+              # on the way down rather than at the low. While the next hour or
+              # two still average below now, the signal is pulled toward the
+              # hold point in proportion, and let go once the price bottoms out.
+              price_near_list: !input price_near_sensor
+              price_falling_margin: !input price_falling_margin
+              price_falling_hold: !input price_falling_hold
+              near_mean_price: >
+                {{ states(price_near_list[0]) | float(0)
+                   if price_near_list | count > 0 else 0 }}
+              near_valid: >
+                {{ price_valid
+                   and price_near_list | count > 0
+                   and states(price_near_list[0]) | is_number
+                   and (near_mean_price | float) > 0 }}
+              price_falling: >
+                {% if near_valid %}
+                  {% set nm = near_mean_price | float %}
+                  {% set span = (price_falling_margin | float) * nm %}
+                  {{ [[(current_price - nm) / span, 0] | max, 1] | min if span > 0 else 0 }}
+                {% else %}
+                  0
+                {% endif %}
+              # Only ever pulls toward Coast: a target already past the hold
+              # point is what the price asked for, and is left alone.
+              price_signal: >
+                {% set p = price_signal_combined | float %}
+                {% set h = price_falling_hold | float %}
+                {{ p + (price_falling | float) * (h - p) if p < h else p }}
 
               # Anchors for whichever mode today is running.
               anchor_comfort: "{{ cool_comfort if day_type == 'cool' else heat_comfort }}"
