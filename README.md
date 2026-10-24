@@ -193,7 +193,9 @@ Without the hold, the house is heated from 19 to 23.5 C while the price slides f
 
 ## Trying parameters on a real day
 
-[`tools/adaptive_climate_setpoint_simulator.html`](tools/adaptive_climate_setpoint_simulator.html) replays one day through the blueprint's logic and charts the target temperature against the electricity price and the outdoor temperature, next to a baseline, so you can see what a change does before you make it. Download the file and open it in a browser; it needs nothing else.
+[`tools/adaptive_climate_setpoint_simulator.html`](tools/adaptive_climate_setpoint_simulator.html) replays a day through the blueprint's logic and charts the target temperature against the electricity price and the outdoor temperature, next to a baseline, so you can see what a change does before you make it. Download the file and open it in a browser; it needs nothing else, and your data never leaves the browser. It has two modes.
+
+### One room
 
 1. In Home Assistant open **History** and add your price sensor, your outdoor temperature sensor and, optionally, a room temperature sensor. Pick the day you want plus the following morning, because the price windows look ahead.
 2. Open the **⋮** menu and choose **Download data**.
@@ -201,7 +203,31 @@ Without the hold, the house is heated from 19 to 23.5 C while the price slides f
 
 Until you load your own data it shows made-up example days. The grey lines are the baseline: by default the same settings with the falling-price hold switched off, or any settings you pin. The tiles estimate cost, energy, average price paid and the room temperature range from a simple room model, which you can calibrate against a measured room temperature. **Blueprint inputs** turns the current settings into YAML for the automation.
 
-It simulates the price signals, the falling-price hold, the demand factor, the target, night mode, the live outdoor override, the indoor gating and the timing guards. The forward and near-term price averages are computed from the price curve the way tibber_prices builds its `⌀ Price Next Nh` sensors, and the day's forecast and the hourly forecast are taken from the measured outdoor temperature. Windows, presence, disabled weekdays and manual overrides are not simulated. The simulator mirrors the blueprint's templates by hand, so a change to the decision logic belongs in both.
+### Whole apartment
+
+Here the room model is not guessed but trained on your own history: one blueprint instance per unit, for an apartment with an office, a bedroom and a living room with kitchen that each have a unit on one shared outdoor unit, a bathroom with an electric heater, and a hallway that connects them all.
+
+1. Open Home Assistant in a desktop browser, press F12, open the **Console**, paste [`tools/ha_export_snippet.js`](tools/ha_export_snippet.js) and press Enter. It only reads, and saves `apartment-export.json`: the climate entities with their modes and setpoints, every temperature, humidity, power and price sensor, door and window sensors, the weather entity and the location rounded to about 10 km for the sun's position.
+2. In the simulator choose **Whole apartment**, load the file, and check under **Which sensor is what** that every room, unit, balcony door and the heater's power are right. The phase that carries the outdoor unit is picked from the data, because it jumps when a unit switches on.
+3. Press **Train the model on this data**. It takes a few seconds, keeps the last quarter of the days back, and then predicts those days from midnight with nothing but what the units, the heater, the windows, the sun and the weather did. **The model and how well it predicts** shows that check, per room.
+
+The model gives every zone three layers: the air that the thermometer reads; the surfaces and furniture, which the air warms within hours; and the walls and floor slab, which take days and leak to the outside and to the neighbours. The units are modelled as one heat pump whose outdoor unit caps their combined output and whose efficiency follows the temperatures, and an open balcony door raises its room's losses. Once trained, the model is remembered in the browser, and the simulator replays any day of the export with your three sets of settings, against what the units really did that day or against other settings.
+
+How far to trust it:
+
+- Home Assistant keeps detailed history for 10 days unless `recorder: purge_keep_days` says otherwise. Two weeks or more give a better model; nights with every unit off say most about how fast each room cools.
+- Electricity is taken from the phase that also carries other loads (a PC, part of the stove, the car). Times that look like three-phase charging are left out and cooking spikes count less, but loads that run whenever the units do stay in the reading, so the units' kWh lean on the heat pump's efficiency more than on that reading.
+- People, cooking and doors without sensors are not inputs. A daily rhythm of internal heat per room is fitted, so a regular pattern is covered, but a single day can be off by a few tenths of a degree.
+
+Use it to compare settings on the same day rather than to forecast a bill.
+
+### What is simulated
+
+Both modes simulate the price signals, the falling-price hold, the demand factor, the target, night mode, the live outdoor override, the indoor gating, door and window sensors (apartment) and the timing guards. The forward and near-term price averages are computed from the price curve the way tibber_prices builds its `⌀ Price Next Nh` sensors, and the day's forecast and the hourly forecast are taken from the measured outdoor temperature. Presence, disabled weekdays and manual overrides are not simulated.
+
+### Changing the simulator
+
+The page is built from [`tools/simulator`](tools/simulator): `src/` holds the blueprint's decision logic, the room and apartment models, the export reader and the training, and `ui/` the page. `npm install && npm run build` writes the single HTML file, and `npm test` trains on made-up data from a known apartment and renders the blueprint's real templates with Jinja2 to check them against `src/blueprint.js` (that part needs Python with `jinja2` and `pyyaml`). The decision logic is mirrored from the blueprint by hand, so a change to one belongs in both.
 
 ## Testing before relying on it
 
