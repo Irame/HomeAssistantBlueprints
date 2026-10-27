@@ -32,7 +32,7 @@
     meta[e] = {
       name: a.friendly_name || null, device_class: dc(e) || null, unit: a.unit_of_measurement || null,
       area: areaOf(e), device: reg(e).device_id || null,
-      ...(e.startsWith('climate.') ? { hvac_modes: a.hvac_modes, min_temp: a.min_temp, max_temp: a.max_temp, step: a.target_temp_step } : {}),
+      ...(e.startsWith('climate.') ? { hvac_modes: a.hvac_modes, fan_modes: a.fan_modes, min_temp: a.min_temp, max_temp: a.max_temp, step: a.target_temp_step } : {}),
     };
   }
   const stats = (period, days, ids) => ids.length ? hass.callWS({ type: 'recorder/statistics_during_period',
